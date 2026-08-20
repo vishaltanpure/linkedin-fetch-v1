@@ -1,0 +1,28 @@
+{
+  "name": "linkedin-fetch-v1",
+  "version": "1.0.0",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "build:exe": "pkg app.js --public --targets node20-win-x64 --output dist/app.exe"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "description": "",
+  "dependencies": {
+    "exceljs": "^4.4.0",
+    "playwright": "^1.61.1"
+  },
+  "overrides": {
+    "uuid": "^11.1.1"
+  },
+  "devDependencies": {
+    "@yao-pkg/pkg": "^6.14.2"
+  },
+  "pkg": {
+    "assets": [
+      "node_modules/playwright-core/**/*"
+    ]
+  }
+}
