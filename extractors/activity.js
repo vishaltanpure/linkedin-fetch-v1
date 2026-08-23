@@ -1,35 +1,21 @@
 /**
  * Recent-activity extractor.
  *
- * Scrapes /in/<publicId>/recent-activity/<tab>/ — a genuinely different
- * rendering layer than the profile/experience pages (legacy
- * "feed-shared-update" / "update-components-*" class names, no
- * componentkey hooks), verified against the live DOM.
+ * Scrapes /in/<publicId>/recent-activity/<tab>/.
  *
- * /recent-activity/all/ is NOT reliable on its own: verified live that it
- * can render completely empty for a profile that has real activity —
- * e.g. a profile whose only recent activity is a reaction shows 0 items
- * on /all/ while /reactions/ shows 36. So the strategy is:
- *   1. Try /all/ first (fast path — works for most profiles, 1 page load).
- *   2. If that comes back empty, check the three specific tabs
- *      (/articles/ = "Posts" in the nav despite the URL name, /comments/,
- *      /reactions/) and use whichever has the genuinely most recent item,
- *      compared by parsing each item's relative-age text.
+ * IMPORTANT (premium / newer layouts):
+ *   - Feed posts are often NOT wrapped in <li>. Waiting on `main li`
+ *     resolves against filter-tabs / social-count lists and misses
+ *     real articles (`[data-view-name="feed-full-update"]` /
+ *     `.feed-shared-update-v2[role="article"]`).
+ *   - Header class `.update-components-header__text-view` is often
+ *     absent on original posts; timestamps are abbreviated ("3mo •",
+ *     "8yr •") instead of "3 months ago • Visible to anyone...".
  *
- * For each feed item:
- *   - Activity type/reaction is in .update-components-header__text-view
- *     as free text ("reposted this", "likes this", "commented on ...").
- *     Only reaction-type activity ("likes this", "celebrates this", ...)
- *     maps to a reaction type; reposts/comments/original posts don't.
- *   - The "N <ago> • [Edited •] Visible to ..." descriptor lives in
- *     .update-components-actor__sub-description .visually-hidden (the
- *     full accessible text; its aria-hidden sibling is the abbreviated
- *     on-screen version).
- *
- * Only the MOST RECENT item feeds reactionType/postedAgoText (those are
- * singular fields). Several of the most recent items' text is combined
- * separately for keyword scanning, since that's a broader "recent
- * activity" signal rather than a single-post field.
+ * Strategy:
+ *   1. Try /all/ first.
+ *   2. If empty, probe /articles/, /comments/, /reactions/ and keep
+ *      the tab with the genuinely most-recent item.
  */
 
 const REACTION_PATTERNS = [
@@ -39,12 +25,24 @@ const REACTION_PATTERNS = [
     [/loves this/i, "LOVE"],
     [/finds this insightful/i, "INSIGHTFUL"],
     [/finds this funny/i, "FUNNY"],
-    [/finds this curious/i, "CURIOUS"]
+    [/finds this curious/i, "CURIOUS"],
+    // Spanish UI (common on LATAM Premium sessions)
+    [/recomienda esto/i, "LIKE"],
+    [/le gusta esto/i, "LIKE"],
+    [/celebra esto/i, "CELEBRATE"],
+    [/apoya esto/i, "SUPPORT"],
+    [/le encanta esto/i, "LOVE"]
 ];
 
-// The nav is labeled "Posts", but its actual URL slug is legacy
-// ("articles") — verified: /recent-activity/posts/ redirects there.
 const FALLBACK_TABS = ["articles", "comments", "reactions"];
+
+const ACTIVITY_ITEM_SELECTOR = [
+    '[data-view-name="feed-full-update"]',
+    '.feed-shared-update-v2[role="article"]',
+    '.feed-shared-update-v2[data-urn^="urn:li:activity"]',
+    ".occludable-update",
+    "main li.profile-creator-shared-feed-update__container"
+].join(", ");
 
 function detectReactionType(headerText) {
     for (const [pattern, type] of REACTION_PATTERNS) {
@@ -53,40 +51,128 @@ function detectReactionType(headerText) {
     return "";
 }
 
-// "3 weeks ago" -> ~21, "9 years ago" -> ~3285, unparseable -> Infinity
-// (treated as oldest/lowest priority rather than accidentally "most recent").
+// Supports both "3 weeks ago" and abbreviated "3mo" / "8yr" / "2d" / "5w".
 function parseRelativeAgeInDays(text) {
-    const match = (text || "").match(/(\d+)\s*(minute|hour|day|week|month|year)s?/i);
-    if (!match) return Infinity;
-    const n = Number(match[1]);
-    const unitDays = {
-        minute: 1 / 1440,
-        hour: 1 / 24,
-        day: 1,
-        week: 7,
-        month: 30,
-        year: 365
-    };
-    return n * (unitDays[match[2].toLowerCase()] || 365);
+    const raw = text || "";
+
+    const long = raw.match(/(\d+)\s*(minute|hour|day|week|month|year)s?/i);
+    if (long) {
+        const n = Number(long[1]);
+        const unitDays = {
+            minute: 1 / 1440,
+            hour: 1 / 24,
+            day: 1,
+            week: 7,
+            month: 30,
+            year: 365
+        };
+        return n * (unitDays[long[2].toLowerCase()] || 365);
+    }
+
+    const short = raw.match(/(\d+)\s*(mo|yr|w|d|h|m)\b/i);
+    if (short) {
+        const n = Number(short[1]);
+        const unitDays = { m: 1 / 1440, h: 1 / 24, d: 1, w: 7, mo: 30, yr: 365 };
+        return n * (unitDays[short[2].toLowerCase()] || 365);
+    }
+
+    return Infinity;
 }
 
 function collectActivityInPage() {
 
-    const items = Array.from(document.querySelectorAll("main li")).slice(0, 10);
+    const clean = s => (s || "").replace(/\s+/g, " ").trim();
 
-    return items.map(item => {
-        const headerEl = item.querySelector(".update-components-header__text-view");
-        const agoEl = item.querySelector(".update-components-actor__sub-description .visually-hidden");
+    const roots = Array.from(document.querySelectorAll(
+        '[data-view-name="feed-full-update"], ' +
+        '.feed-shared-update-v2[role="article"], ' +
+        '.feed-shared-update-v2[data-urn^="urn:li:activity"]'
+    ));
+
+    // Deduplicate: feed-full-update wrappers often contain an inner
+    // .feed-shared-update-v2 that would otherwise be counted twice.
+    const seen = new Set();
+    const items = [];
+    for (const root of roots) {
+        const article = root.matches?.(".feed-shared-update-v2")
+            ? root
+            : (root.querySelector(".feed-shared-update-v2") || root);
+        const key = article.getAttribute("data-urn") ||
+            article.id ||
+            clean(article.innerText).slice(0, 80);
+        if (seen.has(key)) continue;
+        seen.add(key);
+        items.push(article);
+        if (items.length >= 10) break;
+    }
+
+    if (items.length === 0) {
+        for (const li of Array.from(document.querySelectorAll("main li")).slice(0, 10)) {
+            items.push(li);
+        }
+    }
+
+    return items.map(article => {
+        const headerEl = article.querySelector(
+            ".update-components-header__text-view, .update-components-header"
+        );
+
+        const agoEl =
+            article.querySelector(".update-components-actor__sub-description .visually-hidden") ||
+            article.querySelector(".update-components-actor__sub-description") ||
+            Array.from(article.querySelectorAll("span")).find(el =>
+                /\b\d+\s*(mo|yr|w|d|h|m|minute|hour|day|week|month|year)s?\b/i.test(clean(el.textContent))
+            );
+
+        const commentaryEl = article.querySelector(
+            ".update-components-update-v2__commentary, " +
+            ".feed-shared-update-v2__description, " +
+            ".feed-shared-inline-show-more-text, " +
+            "[class*='commentary']"
+        );
+
+        const headerText = clean(headerEl?.textContent);
+        let postedAgoText = clean(agoEl?.textContent);
+        // Trim trailing globe/visibility junk: "3mo •" is enough.
+        postedAgoText = postedAgoText
+            .replace(/\s*Visible to.*$/i, "")
+            .replace(/\s*Visible para.*$/i, "")
+            .replace(/\s+/g, " ")
+            .trim();
+
+        const commentary = clean(commentaryEl?.textContent)
+            .replace(/\s*…more$/i, "")
+            .replace(/\s*see more$/i, "")
+            .trim();
+
+        const fullText = clean(article.innerText);
+
+        // Original posts often have no header; infer repost/comment/reaction
+        // from the leading activity line when present.
+        let inferredHeader = headerText;
+        if (!inferredHeader) {
+            const lead = fullText.slice(0, 160);
+            if (/reposted this|ha vuelto a publicar/i.test(lead)) {
+                inferredHeader = "reposted this";
+            } else if (/commented on|ha comentado/i.test(lead)) {
+                inferredHeader = "commented on this";
+            } else if (/likes this|le gusta esto|recomienda esto/i.test(lead)) {
+                inferredHeader = "likes this";
+            }
+        }
 
         return {
-            headerText: (headerEl?.textContent || "").replace(/\s+/g, " ").trim(),
-            postedAgoText: (agoEl?.textContent || "").replace(/\s+/g, " ").trim(),
-            fullText: (item.innerText || "").replace(/\s+/g, " ").trim()
+            headerText: inferredHeader,
+            postedAgoText,
+            commentary,
+            fullText: [inferredHeader, postedAgoText, commentary, fullText]
+                .filter(Boolean)
+                .join(" ")
         };
-    }).filter(i => i.fullText);
+    }).filter(i => i.fullText && (i.postedAgoText || i.commentary || i.headerText || i.fullText.length > 40));
 }
 
-async function loadActivityTab(page, publicId, tab, waitTimeoutMs = 8000) {
+async function loadActivityTab(page, publicId, tab, waitTimeoutMs = 10000) {
 
     await page.goto(`https://www.linkedin.com/in/${publicId}/recent-activity/${tab}/`, {
         waitUntil: "domcontentloaded",
@@ -97,18 +183,17 @@ async function loadActivityTab(page, publicId, tab, waitTimeoutMs = 8000) {
         return [];
     }
 
-    // Wait for the first activity item to actually render rather than a
-    // blind delay — resolves immediately on a fast load, and its timeout
-    // is itself the correct signal for "this tab has nothing" (rather
-    // than always burning the same fixed wait either way). A genuinely
-    // empty tab burns the FULL waitTimeoutMs every time (there's nothing
-    // to resolve early on), which matters once the fallback path below
-    // may probe up to 3 tabs in sequence — hence the shorter timeout
-    // passed there.
     await page
-        .locator("main li")
+        .locator(ACTIVITY_ITEM_SELECTOR)
         .first()
         .waitFor({ timeout: waitTimeoutMs })
+        .catch(() => {});
+
+    await page.evaluate(() => window.scrollBy(0, 400)).catch(() => {});
+    await page
+        .locator(ACTIVITY_ITEM_SELECTOR)
+        .first()
+        .waitFor({ timeout: Math.min(4000, waitTimeoutMs) })
         .catch(() => {});
 
     return page.evaluate(collectActivityInPage).catch(() => []);
@@ -124,10 +209,22 @@ function buildResult(items) {
 
     result.reactionType = detectReactionType(mostRecent.headerText);
     result.postedAgoText = mostRecent.postedAgoText;
-    result.recentText = items.map(i => i.fullText).join(" \n ");
-    result.summary = [mostRecent.headerText, mostRecent.postedAgoText]
-        .filter(Boolean)
-        .join(" — ");
+
+    // Prefer a useful Activity cell: header + ago, or commentary preview
+    // when the post is an original (no "likes this" header).
+    const commentaryPreview = (mostRecent.commentary || "")
+        .slice(0, 140)
+        .trim();
+
+    result.summary = [
+        mostRecent.headerText,
+        mostRecent.postedAgoText,
+        !mostRecent.headerText && commentaryPreview ? commentaryPreview : ""
+    ].filter(Boolean).join(" — ");
+
+    result.recentText = items
+        .map(i => [i.headerText, i.postedAgoText, i.commentary, i.fullText].filter(Boolean).join(" "))
+        .join(" \n ");
 
     return result;
 }
@@ -142,19 +239,11 @@ async function getActivity(page, profileUrl) {
         return buildResult(allItems);
     }
 
-    // /all/ came back empty — not necessarily true. Check the three
-    // specific tabs and use whichever holds the genuinely most recent
-    // activity, not just the first one that happens to have content.
     let best = null;
     let bestAgeDays = Infinity;
 
     for (const tab of FALLBACK_TABS) {
-        // Shorter wait here than the initial /all/ check: real content
-        // has consistently rendered its first item within ~5s in testing,
-        // and this loop can probe up to 3 tabs, so a genuinely-empty one
-        // (common — most profiles don't have all three tab types active)
-        // shouldn't each burn the full 8s.
-        const items = await loadActivityTab(page, publicId, tab, 5000);
+        const items = await loadActivityTab(page, publicId, tab, 6000);
         if (items.length === 0) continue;
 
         const ageDays = parseRelativeAgeInDays(items[0].postedAgoText);

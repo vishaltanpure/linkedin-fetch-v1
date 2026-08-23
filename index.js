@@ -4,7 +4,7 @@
  * Flow (each step uses a deterministic page, never the lazy profile DOM
  * for Experience):
  *   1. Profile page          -> name, headline, about, location,
- *                               connections, education, openToWork
+ *                               followers, education, openToWork
  *   2. /details/experience/  -> current position, company, dates,
  *                               employment type, company URL
  *   3. /company/<id>/about/  -> website, industry, employee count,
@@ -130,6 +130,7 @@ async function scrapeProfile(page, profileUrl) {
     const diseaseKeywords = scanForKeywords(
         profile.headline,
         profile.about,
+        activity.summary,
         activity.recentText
     );
 
@@ -156,7 +157,10 @@ async function scrapeProfile(page, profileUrl) {
         pronouns: profile.pronouns || "",
         about: profile.about || "",
         location: profile.location || "",
-        connections: profile.connections || "",
+        // followers (not connections) — mapped to connectionsCount in the
+        // output template for column-name compatibility with the client sheet.
+        connections: profile.followers || "",
+        followers: profile.followers || "",
         education: profile.education || "",
         openToWork: profile.openToWork || false,
         currentPosition: experience.currentPosition || "",

@@ -67,7 +67,9 @@ def to_row(record, headers=COLUMNS):
         "currentPosition/0/companyName": record.get("currentCompany", ""),
         "currentPosition/0/duration": record.get("duration", ""),
         "currentPosition/0/endDate/text": record.get("endDate", ""),
-        "connectionsCount": derive_connections_count(record.get("connections", "")),
+        "connectionsCount": derive_connections_count(
+            record.get("followers") or record.get("connections", "")
+        ),
         "currentPosition/0/companyLinkedinUrl": record.get("companyLinkedinUrl", ""),
         "location/parsed/country": derive_country(record.get("location", "")),
         "employeeCountRange/start": derive_employee_start(record.get("employeeCount", "")),

@@ -11,8 +11,9 @@ const log = require("./logger");
 // "870,998 followers" / "316 connections" / "500+ connections"
 const COUNT_LIKE = /^[\d,]+\+?\s*(followers?|connections?)$/i;
 
-// The only shapes a connections value should ever take: "316", "1,234", "500+"
-const CONNECTIONS_SHAPE = /^[\d,]+\+?$/;
+// The only shapes a followers/connections value should ever take: "316", "1,234", "500+"
+const COUNT_SHAPE = /^[\d,]+\+?$/;
+const CONNECTIONS_SHAPE = COUNT_SHAPE; // alias kept for older call sites
 
 // "3rd", "· 3rd", "2nd+", "1st" — a connection-degree badge, never a headline.
 // Root cause is already fixed at extraction (extractors/profile.js skips this
@@ -69,8 +70,18 @@ function validateLocation(location, context) {
 function validateConnections(connections, context) {
     if (!connections) return "";
     const trimmed = connections.trim();
-    if (!CONNECTIONS_SHAPE.test(trimmed)) {
+    if (!COUNT_SHAPE.test(trimmed)) {
         log.warning(`[${context}] Rejected connections value "${connections}" — doesn't match expected number/"N+" shape`);
+        return "";
+    }
+    return trimmed;
+}
+
+function validateFollowers(followers, context) {
+    if (!followers) return "";
+    const trimmed = followers.trim();
+    if (!COUNT_SHAPE.test(trimmed)) {
+        log.warning(`[${context}] Rejected followers value "${followers}" — doesn't match expected number/"N+" shape`);
         return "";
     }
     return trimmed;
@@ -80,7 +91,9 @@ module.exports = {
     validateHeadline,
     validateLocation,
     validateConnections,
+    validateFollowers,
     COUNT_LIKE,
+    COUNT_SHAPE,
     CONNECTIONS_SHAPE,
     DEGREE_BADGE,
     PRONOUN_BADGE

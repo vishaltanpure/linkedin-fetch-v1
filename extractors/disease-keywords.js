@@ -4,6 +4,10 @@
  * page, or otherwise signals the contact should be reviewed before
  * further outreach (retirement, condolences, etc).
  *
+ * Keyword list is the client-provided "Disease Keywords" set (including
+ * the given misspelling "Condolense"). "Condolence" is also kept so the
+ * correctly-spelled form still matches.
+ *
  * Matching is whole-word/phrase and case-insensitive, so e.g. "Rip"
  * doesn't match inside "trip" or "gripping". It CAN still match a
  * legitimate unrelated use of a short common word (e.g. someone whose
@@ -23,8 +27,8 @@ const KEYWORDS = [
     "Rest In Peace",
     "Retired",
     "Rip",
-    "Condolence",
-    "Condolense" // as given; kept alongside the standard spelling above
+    "Condolense", // as provided by client
+    "Condolence"  // correct spelling — still match real usage
 ];
 
 // Trailing s? allows common plurals ("condolences") without loosening
@@ -47,9 +51,12 @@ function scanForKeywords(...texts) {
     }
 
     // "Condolence" and "Condolense" both hitting is just spelling
-    // duplication of the same signal — collapse to one.
+    // duplication of the same signal — collapse to the client-provided form.
     if (matched.includes("Condolence") && matched.includes("Condolense")) {
-        matched.splice(matched.indexOf("Condolense"), 1);
+        matched.splice(matched.indexOf("Condolence"), 1);
+    } else if (matched.includes("Condolence") && !matched.includes("Condolense")) {
+        // Prefer reporting the client spelling when only the correct one hit.
+        matched[matched.indexOf("Condolence")] = "Condolense";
     }
 
     return matched;

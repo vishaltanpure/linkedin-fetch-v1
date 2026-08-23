@@ -1,11 +1,11 @@
 const SELECTORS = require("../config/selectors");
-const { validateHeadline, validateLocation, validateConnections } = require("../utils/validators");
+const { validateHeadline, validateLocation, validateFollowers } = require("../utils/validators");
 const { getPublicId } = require("../utils/linkedin-url");
 const log = require("../utils/logger");
 
 /**
  * Top-card field extraction (headline, company/education line, location,
- * connections) is anchored to DOM STRUCTURE/POSITION rather than hashed
+ * followers) is anchored to DOM STRUCTURE/POSITION rather than hashed
  * CSS class names (LinkedIn's build hashes change between deploys — see
  * the project's own history of that breaking earlier heuristics) or loose
  * substring matching over every <p> on the page (which previously let a
@@ -38,20 +38,18 @@ const log = require("../utils/logger");
  *     <p><a href=".../overlay/contact-info/">Contact info</a></p>   contact-info link
  *   </div>
  *   ...
- *   EITHER (verified, two different profiles use different markup):
+ *   Followers (preferred over connections — client request):
+ *   EITHER:
  *   <div>
- *     <p>316</p>
- *     <p>connections</p>                     <- connections: isolated div,
- *   </div>                                      exact text "connections",
- *                                                preceding <p> is the count
+ *     <p>870,998</p>
+ *     <p>followers</p>                       <- isolated label + preceding count
+ *   </div>
  *   OR:
- *   <p>500+ connections</p>                  <- connections: combined into
- *                                                ONE <p>, count + label together
+ *   <p>870,998 followers</p>                 <- combined count + label
  *
- * A profile's own follower count (as opposed to connections) lives inside
- * a completely different "Activity" card further down the page, under its
- * own <h2>Activity</h2> — structurally nowhere near this block, which is
- * why anchoring beats "any line that contains a number" style heuristics.
+ * Creator / Activity-card layouts also expose followers under the
+ * profile's own <h2>Activity</h2> section further down the page — we
+ * check that as a fallback when the top card only shows connections.
  */
 
 function extractTopCardInPage(fullName) {
@@ -77,7 +75,7 @@ function extractTopCardInPage(fullName) {
 
     const isBadge = text => DEGREE_BADGE_PATTERN.test(text) || PRONOUN_BADGE_PATTERN.test(text);
 
-    const result = { headline: "", companyLine: "", pronouns: "", location: "", connections: "" };
+    const result = { headline: "", companyLine: "", pronouns: "", location: "", followers: "" };
 
     // ---- headline + company/education line: first two non-badge <p> after the name h2 ----
     const nodes = Array.from(document.querySelectorAll("main h2, main p"));
@@ -108,27 +106,40 @@ function extractTopCardInPage(fullName) {
         result.location = clean(firstP?.textContent);
     }
 
-    // ---- connections ----
-    // Pattern A: isolated <div> with an exact "connections" <p>, count is
+    // ---- followers (not connections) ----
+    // Pattern A: isolated <div> with an exact "followers" <p>, count is
     // the preceding sibling <p>.
-    const connectionsLabel = Array.from(document.querySelectorAll("p")).find(
-        p => /^connections?$/i.test(clean(p.textContent))
+    const followersLabel = Array.from(document.querySelectorAll("p")).find(
+        p => /^followers?$/i.test(clean(p.textContent))
     );
-    if (connectionsLabel) {
-        const prev = connectionsLabel.previousElementSibling;
+    if (followersLabel) {
+        const prev = followersLabel.previousElementSibling;
         if (prev && prev.tagName === "P") {
-            result.connections = clean(prev.textContent);
+            result.followers = clean(prev.textContent);
         }
     }
 
-    // Pattern B: a single <p> combining count + label, e.g. "500+ connections".
-    if (!result.connections) {
+    // Pattern B: a single <p> combining count + label, e.g. "870,998 followers".
+    if (!result.followers) {
         const combined = Array.from(document.querySelectorAll("p")).find(
-            p => /^[\d,]+\+?\s+connections?$/i.test(clean(p.textContent))
+            p => /^[\d,]+\+?\s+followers?$/i.test(clean(p.textContent))
         );
         if (combined) {
-            const match = clean(combined.textContent).match(/^([\d,]+\+?)\s+connections?$/i);
-            if (match) result.connections = match[1];
+            const match = clean(combined.textContent).match(/^([\d,]+\+?)\s+followers?$/i);
+            if (match) result.followers = match[1];
+        }
+    }
+
+    // Pattern C: Activity card — "<h2>Activity</h2>" region often shows
+    // "N followers" when the top card only exposes connections.
+    if (!result.followers) {
+        const headings = Array.from(document.querySelectorAll("main h2"));
+        const activityH2 = headings.find(h => /^activity$/i.test(clean(h.textContent)));
+        if (activityH2) {
+            const region = activityH2.closest("section, div") || activityH2.parentElement;
+            const regionText = clean(region?.innerText || "");
+            const match = regionText.match(/([\d,]+\+?)\s+followers?\b/i);
+            if (match) result.followers = match[1];
         }
     }
 
@@ -150,10 +161,21 @@ async function getProfile(page) {
     const firstName = parts.shift() || "";
     const lastName = parts.join(" ");
 
+    // Follower count often lives on the Activity card further down; nudge
+    // lazy sections into view before reading the top card + Activity.
+    await page.evaluate(() => window.scrollBy(0, 900)).catch(() => {});
+    await page
+        .locator("main h2")
+        .filter({ hasText: /^Activity$/i })
+        .first()
+        .waitFor({ timeout: 3000 })
+        .catch(() => {});
+    await page.evaluate(() => window.scrollTo(0, 0)).catch(() => {});
+
     const topCard = await page.evaluate(extractTopCardInPage, fullName);
 
     const location = validateLocation(topCard.location, fullName);
-    const connections = validateConnections(topCard.connections, fullName);
+    const followers = validateFollowers(topCard.followers, fullName);
 
     // "Aeromexico · Universidad Estatal del Valle de Ecatepec" -> company, education
     const [companyName = "", education = ""] = topCard.companyLine
@@ -168,8 +190,8 @@ async function getProfile(page) {
     if (!topCard.location) {
         log.info(`[${fullName}] No location found on profile (not filled in, or Contact info link absent)`);
     }
-    if (!topCard.connections) {
-        log.info(`[${fullName}] No connections count found on profile (may show only a follower count instead)`);
+    if (!topCard.followers) {
+        log.info(`[${fullName}] No followers count found on profile`);
     }
 
     // About section text. data-testid="expandable-text-box" is the stable
@@ -238,7 +260,7 @@ async function getProfile(page) {
 
         location,
 
-        connections,
+        followers,
 
         openToWork
 

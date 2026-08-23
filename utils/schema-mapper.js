@@ -26,6 +26,7 @@ const OUTPUT_COLUMNS = [
     "openToWork",
     "post/engagement/reactions/type",
     "Activity",
+    // Holds FOLLOWERS (not connections) — column name kept for template compat.
     "connectionsCount",
     "currentPosition/companyLinkedinUrl",
     "location/country",
@@ -69,9 +70,9 @@ function mapToRow(record) {
         // — it's a subset of Activity (headerText + postedAgoText
         // combined), which already carries the same information.
         Activity: record.activitySummary || "",
-        // Kept as the literal string LinkedIn shows ("500+" stays "500+",
-        // never coerced to a bare number that would silently drop the "+").
-        connectionsCount: record.connections || "",
+        // Followers count (not connections). Column name stays
+        // connectionsCount for template compatibility with the client sheet.
+        connectionsCount: record.followers || record.connections || "",
         "currentPosition/companyLinkedinUrl": record.companyLinkedinUrl || "",
         "location/country": deriveCountry(record.location),
         associateMember: record.associatedMembers ? Number(record.associatedMembers) : "",
