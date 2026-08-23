@@ -157,8 +157,6 @@ async function scrapeProfile(page, profileUrl) {
         pronouns: profile.pronouns || "",
         about: profile.about || "",
         location: profile.location || "",
-        // followers (not connections) — mapped to connectionsCount in the
-        // output template for column-name compatibility with the client sheet.
         connections: profile.followers || "",
         followers: profile.followers || "",
         education: profile.education || "",

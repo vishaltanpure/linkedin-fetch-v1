@@ -17,7 +17,7 @@
  *   firstName, lastName, headline,
  *   currentPosition/0/position, currentPosition/0/companyName,
  *   currentPosition/0/duration, currentPosition/0/endDate/text,
- *   connectionsCount (followers), currentPosition/0/companyLinkedinUrl,
+ *   followers count, currentPosition/0/companyLinkedinUrl,
  *   location/parsed/country, employeeCountRange/start,
  *   industries/0/name, website, companyType
  *

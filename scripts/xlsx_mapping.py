@@ -15,7 +15,7 @@ COLUMNS = [
     "currentPosition/0/companyName",
     "currentPosition/0/duration",
     "currentPosition/0/endDate/text",
-    "connectionsCount",
+    "followers count",
     "currentPosition/0/companyLinkedinUrl",
     "location/parsed/country",
     "employeeCountRange/start",
@@ -41,11 +41,11 @@ def derive_employee_start(employee_count):
     return int(match.group(1).replace(",", ""))
 
 
-def derive_connections_count(connections):
-    if not connections:
+def derive_followers_count(followers):
+    if not followers:
         return ""
-    digits = re.sub(r"[^\d]", "", connections)
-    return int(digits) if digits else connections
+    digits = re.sub(r"[^\d]", "", followers)
+    return int(digits) if digits else followers
 
 
 def normalise_url(url):
@@ -67,7 +67,7 @@ def to_row(record, headers=COLUMNS):
         "currentPosition/0/companyName": record.get("currentCompany", ""),
         "currentPosition/0/duration": record.get("duration", ""),
         "currentPosition/0/endDate/text": record.get("endDate", ""),
-        "connectionsCount": derive_connections_count(
+        "followers count": derive_followers_count(
             record.get("followers") or record.get("connections", "")
         ),
         "currentPosition/0/companyLinkedinUrl": record.get("companyLinkedinUrl", ""),
