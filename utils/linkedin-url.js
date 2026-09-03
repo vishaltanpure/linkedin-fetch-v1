@@ -51,24 +51,39 @@ function buildExperienceUrl(profileUrl) {
 }
 
 /**
- * Normalise any company URL to its canonical /about/ page.
+ * Normalise any company OR school org URL to its canonical /about/ page.
  *
  *   https://www.linkedin.com/company/162594/?trk=...   ->
  *   https://www.linkedin.com/company/162594/about/
+ *
+ *   https://www.linkedin.com/school/university-of-mississippi-medical-center/
+ *   -> https://www.linkedin.com/school/university-of-mississippi-medical-center/about/
+ *
+ * Hospitals/universities often use /school/ instead of /company/ on Experience.
  */
 function toCompanyAboutUrl(companyUrl) {
 
     if (!companyUrl) return "";
 
-    // strip query / hash
-    let clean = String(companyUrl).split("?")[0].split("#")[0];
+    // strip query / hash; accept relative paths
+    let clean = String(companyUrl).trim().split("?")[0].split("#")[0];
+    if (clean.startsWith("/")) {
+        clean = `https://www.linkedin.com${clean}`;
+    }
 
-    // isolate /company/<slug-or-id>/
-    const match = clean.match(/\/company\/([^/]+)/);
-
+    const match = clean.match(/linkedin\.com\/(company|school)\/([^/?#]+)/i);
     if (!match) return "";
 
-    return `https://www.linkedin.com/company/${match[1]}/about/`;
+    const kind = match[1].toLowerCase();
+    const slug = match[2];
+    return `https://www.linkedin.com/${kind}/${slug}/about/`;
+}
+
+/** Canonical org page (no /about/) for output column currentPosition/companyLinkedinUrl */
+function toCompanyLinkedinUrl(companyUrl) {
+    const about = toCompanyAboutUrl(companyUrl);
+    if (!about) return "";
+    return about.replace(/\/about\/?$/, "/");
 }
 
 module.exports = {
@@ -76,5 +91,6 @@ module.exports = {
     looksLikeEncodedProfileId,
     getPublicId,
     buildExperienceUrl,
-    toCompanyAboutUrl
+    toCompanyAboutUrl,
+    toCompanyLinkedinUrl
 };

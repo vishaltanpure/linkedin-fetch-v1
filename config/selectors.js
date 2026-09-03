@@ -8,7 +8,7 @@ const SELECTORS = {
 
         PARAGRAPHS: "main p",
 
-        COMPANY_LINKS: 'a[href*="/company/"]'
+        COMPANY_LINKS: 'a[href*="/company/"], a[href*="/school/"]'
 
     },
 
@@ -24,7 +24,7 @@ const SELECTORS = {
         // One node per company (single-role or grouped).
         ENTITY: '[componentkey^="entity-collection-item"]',
 
-        COMPANY_LINK: 'a[href*="/company/"]',
+        COMPANY_LINK: 'a[href*="/company/"], a[href*="/school/"]',
 
         // Company logo carries aria-label="<Company> logo".
         LOGO: '[role="img"][aria-label$="logo"]'

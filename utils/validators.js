@@ -47,6 +47,29 @@ function validateHeadline(headline, context, companyName, location) {
         log.warning(`[${context}] Rejected headline "${headline}" — looks like a pronouns badge, not a headline`);
         return "";
     }
+    // Nested-span / UI fragment garbage (observed: "This is a mo")
+    if (/^this is a\b/i.test(trimmed) || trimmed.length < 4) {
+        log.warning(`[${context}] Rejected headline "${headline}" — looks like UI placeholder / fragment`);
+        return "";
+    }
+    if (/^(beginning of dialog|end of dialog|this is a modal)/i.test(trimmed)) {
+        log.warning(`[${context}] Rejected headline "${headline}" — looks like dialog chrome`);
+        return "";
+    }
+    if (/^(followers?|connections?)$/i.test(trimmed) || COUNT_LIKE.test(trimmed)) {
+        log.warning(`[${context}] Rejected headline "${headline}" — looks like a follower/connection label`);
+        return "";
+    }
+    // About section prose (LinkedIn headline max is 220 chars)
+    if (
+        trimmed.length > 220 ||
+        /\b(see more|…\s*more|\.{3}\s*more)\s*$/i.test(trimmed) ||
+        (trimmed.length > 140 && (trimmed.match(/[.!?]/g) || []).length >= 2)
+    ) {
+        const preview = trimmed.length > 80 ? `${trimmed.slice(0, 80)}…` : trimmed;
+        log.warning(`[${context}] Rejected headline "${preview}" — looks like About section prose`);
+        return "";
+    }
     if (companyName && normalize(trimmed) === normalize(companyName)) {
         log.warning(`[${context}] Rejected headline "${headline}" — identical to the company name`);
         return "";

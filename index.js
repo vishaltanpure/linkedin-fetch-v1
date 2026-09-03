@@ -139,9 +139,9 @@ async function scrapeProfile(page, profileUrl) {
     const experience = await retry(() => getExperience(page, resolvedProfileUrl));
     log.success(`Experience extracted (${experience.experiences.length} roles)`);
 
-    // ---- 3. Company About ----
+    // ---- 3. Company About (works for /company/…/about/ and /school/…/about/) ----
     const company = await retry(() =>
-        getCompanyAbout(page, experience.companyLinkedinUrl)
+        getCompanyAbout(page, experience.companyAboutUrl || experience.companyLinkedinUrl)
     );
     log.success("Company about extracted");
 
@@ -173,6 +173,20 @@ async function scrapeProfile(page, profileUrl) {
     const currentPosition = experience.currentPosition || inferred.currentPosition || "";
     const currentCompany = experience.currentCompany || profile.companyName || inferred.currentCompany || "";
 
+    // If top-card headline failed (credentials in name break DOM match),
+    // fall back to the current job title from Experience.
+    const headline = profile.headline || currentPosition || "";
+
+    // Past role = first non-current experience entry (if any)
+    const past =
+        (experience.experiences || []).find(r =>
+            r &&
+            (r.title !== currentPosition || r.company !== currentCompany) &&
+            !r.isCurrent
+        ) ||
+        (experience.experiences || [])[1] ||
+        null;
+
     // ---- Assemble the required output shape ----
     return {
         profileUrl,
@@ -180,7 +194,7 @@ async function scrapeProfile(page, profileUrl) {
         fullName: profile.fullName || "",
         firstName: profile.firstName || "",
         lastName: profile.lastName || "",
-        headline: profile.headline || "",
+        headline,
         pronouns: profile.pronouns || "",
         about: profile.about || "",
         location: profile.location || "",
@@ -202,6 +216,8 @@ async function scrapeProfile(page, profileUrl) {
         companyType: company.companyType || "",
         headquarters: company.headquarters || "",
         associatedMembers: company.associatedMembers || "",
+        pastExperienceTitle: past ? past.title || "" : "",
+        pastExperienceCompany: past ? past.company || "" : "",
         postReactionType: activity.reactionType || "",
         postedAgoText: activity.postedAgoText || "",
         activitySummary: activity.summary || "",

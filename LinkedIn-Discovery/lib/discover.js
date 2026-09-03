@@ -13,7 +13,7 @@ const path = require("path");
 const { createBrowser, closeBrowser } = require("../../browser/browser");
 const { scrapeProfile } = require("../../index");
 const { isValidLinkedInProfileUrl } = require("../../utils/linkedin-url");
-const { OUTPUT_COLUMNS, ORIGINAL_URL_COLUMN, mapToRow } = require("../../utils/schema-mapper");
+const { OUTPUT_COLUMNS, mapToRow, blankMappedRow } = require("../../utils/schema-mapper");
 const { toCsv } = require("../../utils/csv");
 const { writeWorkbook } = require("../../utils/xlsx");
 const { withTimeout } = require("../../utils/timeout");
@@ -32,10 +32,7 @@ const SEARCH_QUERY_COLUMN = "searchQuery";
 const SEARCH_MODE_COLUMN = "searchMode";
 
 function blankRow(url) {
-    const blank = {};
-    for (const col of OUTPUT_COLUMNS) blank[col] = "";
-    blank[ORIGINAL_URL_COLUMN] = url || "";
-    return blank;
+    return blankMappedRow(url);
 }
 
 function buildOutputPath(explicit, ext, suffix = "") {
@@ -125,21 +122,13 @@ async function scrapeUrls(context, urls, jobTimeoutMs, searchDescription, concur
                         jobTimeoutMs,
                         `Profile timed out after ${jobTimeoutMs}ms`
                     );
-                    results[i] = {
-                        [SEARCH_QUERY_COLUMN]: searchDescription,
-                        [URL_COLUMN]: profileUrl,
-                        ...mapToRow(record)
-                    };
+                    results[i] = mapToRow(record, profileUrl);
                     captured++;
                     log.success(`${label} Scraped`);
                 } catch (err) {
                     scrapeFailed++;
                     log.error(`${label} Scrape failed (${err.message}) — continuing`);
-                    results[i] = {
-                        [SEARCH_QUERY_COLUMN]: searchDescription,
-                        [URL_COLUMN]: rawUrl,
-                        ...blankRow(rawUrl)
-                    };
+                    results[i] = blankRow(rawUrl);
 
                     if (/login|authwall|checkpoint|session expired/i.test(err.message || "")) {
                         sessionExpired = true;
@@ -295,7 +284,7 @@ async function runDiscovery(options) {
         const ext = format === "xlsx" ? ".xlsx" : ".csv";
         const outFile = buildOutputPath(outputPath, ext);
 
-        const headers = [SEARCH_QUERY_COLUMN, URL_COLUMN, ...OUTPUT_COLUMNS];
+        const headers = [...OUTPUT_COLUMNS];
 
         if (ext === ".xlsx") {
             await writeWorkbook(outFile, [{ name: "Discovery", headers, rows }]);
@@ -355,7 +344,7 @@ async function runDiscoveryBatch(jobs, options = {}) {
     const ext = format === "xlsx" ? ".xlsx" : ".csv";
     const outFile = buildOutputPath(outputPath, ext, "-batch");
 
-    const headers = [SEARCH_QUERY_COLUMN, URL_COLUMN, ...OUTPUT_COLUMNS];
+    const headers = [...OUTPUT_COLUMNS];
 
     if (ext === ".xlsx") {
         await writeWorkbook(outFile, [{ name: "Discovery", headers, rows: allRows }]);

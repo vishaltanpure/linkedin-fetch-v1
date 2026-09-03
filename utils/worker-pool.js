@@ -15,14 +15,13 @@
  */
 
 const { scrapeProfile } = require("../index");
-const { OUTPUT_COLUMNS, ORIGINAL_URL_COLUMN, mapToRow } = require("./schema-mapper");
+const { OUTPUT_COLUMNS, mapToRow, blankMappedRow } = require("./schema-mapper");
 const Delay = require("./delay");
 const log = require("./logger");
 const { withTimeout } = require("./timeout");
 const CONFIG = require("../config/concurrency");
 
 const URL_COLUMN = "originalQuery/query";
-const OUTPUT_COLUMN_SET = new Set(OUTPUT_COLUMNS);
 
 function isSessionError(err) {
     return /login|authwall|checkpoint|session expired/i.test(err.message || "");
@@ -43,12 +42,6 @@ function isRetryableError(err) {
     return true;
 }
 
-function blankScrapedFields() {
-    const blank = {};
-    for (const col of OUTPUT_COLUMNS) blank[col] = "";
-    return blank;
-}
-
 function sleep(ms) {
     return new Promise(resolve => setTimeout(resolve, ms));
 }
@@ -66,16 +59,9 @@ async function processTable(context, table, session, concurrency = CONFIG.MAX_CO
 
     const { name, headers, rows } = table;
 
-    // Preserve only genuinely-foreign columns (e.g. "notes", "tag"). If
-    // this table was already produced by a prior run of this app (or
-    // manually pre-filled, like the Downloads sheet), it already carries
-    // our own output column names — those must NOT be preserved as-is,
-    // or they'd appear twice: once empty (stale header, never written
-    // to) and once more further right with the freshly scraped values.
-    const preservedHeaders = headers.filter(
-        h => h !== URL_COLUMN && !OUTPUT_COLUMN_SET.has(h)
-    );
-    const outputColumns = [...preservedHeaders, URL_COLUMN, ...OUTPUT_COLUMNS];
+    // Output is exactly the mapped template columns (first column of the
+    // mapping sheet). Input still requires originalQuery/query to find URLs.
+    const outputColumns = [...OUTPUT_COLUMNS];
 
     const results = new Array(rows.length);
     const stats = {
@@ -90,8 +76,8 @@ async function processTable(context, table, session, concurrency = CONFIG.MAX_CO
     let nextIndex = 0;
     const effectiveConcurrency = Math.max(1, Math.min(concurrency, rows.length || 1));
 
-    function blankRowFor(inputRow, url) {
-        return { ...inputRow, [URL_COLUMN]: url, ...blankScrapedFields(), [ORIGINAL_URL_COLUMN]: url };
+    function blankRowFor(_inputRow, url) {
+        return blankMappedRow(url);
     }
 
     async function scrapeWithRetry(page, url, workerLabel) {
@@ -155,13 +141,10 @@ async function processTable(context, table, session, concurrency = CONFIG.MAX_CO
 
                 try {
                     const record = await scrapeWithRetry(page, url, workerLabel);
-                    // URL_COLUMN ("originalQuery/query") stays the raw input,
-                    // unchanged. ORIGINAL_URL_COLUMN ("Original LinkedIn URL")
-                    // comes from mapToRow(record) — the browser-resolved URL,
-                    // NOT overridden back to the raw input here (that was the
-                    // bug: it used to force this column back to the raw
-                    // encoded URL even after a successful resolve+scrape).
-                    results[i] = { ...inputRow, [URL_COLUMN]: url, ...mapToRow(record) };
+                    // Output row = mapped template only.
+                    // Linkedin Contact ← input URL (originalQuery/query)
+                    // Linkedin Public Profile URL ← resolved URL from scrape
+                    results[i] = mapToRow(record, url);
                     stats.succeeded++;
                     log.success(`${workerLabel} Scraped`);
                 } catch (err) {

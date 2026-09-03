@@ -37,7 +37,7 @@
  * each line is classified by pattern rather than by index.
  */
 
-const { buildExperienceUrl, toCompanyAboutUrl } = require("../utils/linkedin-url");
+const { buildExperienceUrl, toCompanyAboutUrl, toCompanyLinkedinUrl } = require("../utils/linkedin-url");
 const scroll = require("../utils/scroll");
 
 // ---------------------------------------------------------------------------
@@ -53,13 +53,6 @@ function collectEntitiesInPage() {
             .map(p => clean(p.textContent))
             .filter(Boolean);
 
-    // Previously scoped to the "top_anchor" marker's .parentElement as a
-    // (unnecessary) optimization — verified on a real profile where that
-    // parent does NOT contain the entity list (0 found) while <main> does
-    // (10 found), silently producing zero experience roles. The anchor
-    // adds a nesting-depth assumption that isn't reliable across layouts;
-    // componentkey^="entity-collection-item" is specific enough that
-    // searching all of <main> is both safe and more robust.
     const container = document.querySelector("main") || document.body;
 
     const entities = Array.from(
@@ -73,20 +66,21 @@ function collectEntitiesInPage() {
             ? logoEl.getAttribute("aria-label").replace(/\s*logo$/i, "").trim()
             : "";
 
+        // Companies AND schools (universities/hospitals often use /school/)
         const companyLinks = Array.from(
-            entity.querySelectorAll('a[href*="/company/"]')
+            entity.querySelectorAll('a[href*="/company/"], a[href*="/school/"]')
         );
         const primaryHref = companyLinks.length
             ? companyLinks[0].getAttribute("href")
             : "";
 
-        // Header text-link = first company link that carries <p> text.
+        // Header text-link = first org link that carries <p> text.
         const headerLink = companyLinks.find(a => a.querySelector("p")) || null;
         const headerLines = headerLink ? pTexts(headerLink) : pTexts(entity);
 
         // Nested <li> => grouped company with several roles.
         const subRoles = Array.from(entity.querySelectorAll("li")).map(li => {
-            const liLink = li.querySelector('a[href*="/company/"]');
+            const liLink = li.querySelector('a[href*="/company/"], a[href*="/school/"]');
             return {
                 href: liLink ? liLink.getAttribute("href") : primaryHref,
                 lines: pTexts(li)
@@ -101,7 +95,21 @@ function collectEntitiesInPage() {
 // Node-side classification helpers.
 // ---------------------------------------------------------------------------
 const EMPLOYMENT_TYPES =
-    /^(full-time|part-time|self-employed|freelance|contract|internship|apprenticeship|seasonal)$/i;
+    /^(full[\s-]?time|part[\s-]?time|self[\s-]?employed|freelance|contract|internship|apprenticeship|seasonal)$/i;
+
+const EMPLOYMENT_CANON = {
+    "full time": "Full-time",
+    "full-time": "Full-time",
+    "part time": "Part-time",
+    "part-time": "Part-time",
+    "self employed": "Self-employed",
+    "self-employed": "Self-employed",
+    freelance: "Freelance",
+    contract: "Contract",
+    internship: "Internship",
+    apprenticeship: "Apprenticeship",
+    seasonal: "Seasonal"
+};
 
 function splitMiddot(text) {
     return String(text || "")
@@ -110,8 +118,24 @@ function splitMiddot(text) {
         .filter(Boolean);
 }
 
+/** Word-boundary "Present" — must NOT match "Presentation Skills". */
 function isDateLine(s) {
-    return /present/i.test(s) || /\b(19|20)\d{2}\b/.test(s);
+    return /\bpresent\b/i.test(s) || /\b(19|20)\d{2}\b/.test(s);
+}
+
+function isSkillsLine(s) {
+    return /^skills\s*:/i.test(String(s || "").trim());
+}
+
+/** Pull employment type from a line or "Full-time · 9 yrs 1 mo" header. */
+function extractEmploymentType(text) {
+    for (const part of splitMiddot(text)) {
+        const key = part.trim().toLowerCase().replace(/\s+/g, " ");
+        if (EMPLOYMENT_TYPES.test(key)) {
+            return EMPLOYMENT_CANON[key] || EMPLOYMENT_CANON[key.replace(/\s+/g, "-")] || part.trim();
+        }
+    }
+    return "";
 }
 
 function isLocationLine(s) {
@@ -155,14 +179,26 @@ function parseDateLine(dateLine) {
     return { startDate, endDate, duration };
 }
 
+/** True for "Full-time" or group header "Full-time · 9 yrs 1 mo". */
+function isEmploymentMetaLine(line) {
+    const parts = splitMiddot(line);
+    if (!parts.length) return false;
+    if (!extractEmploymentType(parts[0])) return false;
+    return parts.slice(1).every(p =>
+        extractEmploymentType(p) ||
+        /\b\d+\s*(yr|yrs|year|years|mo|mos|month|months)\b/i.test(p) ||
+        /\b(remote|hybrid|on-site|onsite)\b/i.test(p)
+    );
+}
+
 /**
  * Turn a title + a set of descriptor <p> lines into a normalised role.
- * `seedCompany` is the group-header company (grouped entities); "" otherwise.
+ * `seedCompany` / `seedEmploymentType` come from a grouped company header.
  */
-function classifyRole(title, lines, seedCompany, href, logoCompany) {
+function classifyRole(title, lines, seedCompany, href, logoCompany, seedEmploymentType) {
 
     let company = seedCompany || "";
-    let employmentType = "";
+    let employmentType = seedEmploymentType || "";
     let dateLine = "";
     let location = "";
 
@@ -170,23 +206,27 @@ function classifyRole(title, lines, seedCompany, href, logoCompany) {
         const line = (raw || "").trim();
         if (!line) continue;
 
+        // "Skills: Presentation Skills" — never a date/location/company.
+        if (isSkillsLine(line)) continue;
+
         // "Company · Full-time" (single-role layout)
-        if (!company && line.includes("·") && !isDateLine(line)) {
+        if (!company && line.includes("·") && !isDateLine(line) && !isEmploymentMetaLine(line)) {
             const parts = splitMiddot(line);
             company = parts[0] || "";
-            if (parts[1] && EMPLOYMENT_TYPES.test(parts[1])) {
-                employmentType = parts[1];
-            }
+            const et = extractEmploymentType(line);
+            if (et) employmentType = et;
             continue;
         }
 
+        // First real date line wins.
         if (isDateLine(line)) {
-            dateLine = line;
+            if (!dateLine) dateLine = line;
             continue;
         }
 
-        if (EMPLOYMENT_TYPES.test(line)) {
-            employmentType = line;
+        // Standalone "Full-time" or "Full-time · 9 yrs 1 mo"
+        if (isEmploymentMetaLine(line)) {
+            employmentType = employmentType || extractEmploymentType(line);
             continue;
         }
 
@@ -220,7 +260,7 @@ function classifyRole(title, lines, seedCompany, href, logoCompany) {
     }
 
     const { startDate, endDate, duration } = parseDateLine(dateLine);
-    const isCurrent = /present/i.test(dateLine);
+    const isCurrent = /\bpresent\b/i.test(dateLine);
 
     // Defense in depth: even a positively-matched "location" (e.g. it
     // contained a comma) is rejected if it's actually just the title or
@@ -254,6 +294,9 @@ function entityToRoles(entity) {
 
     if (realSubRoles.length > 0) {
         const groupCompany = headerLines[0] || logoCompany || "";
+        // e.g. headerLines[1] === "Full-time · 9 yrs 1 mo"
+        const groupEmployment =
+            headerLines.slice(1).map(extractEmploymentType).find(Boolean) || "";
         return realSubRoles.map(sr => {
             const [title, ...rest] = sr.lines;
             return classifyRole(
@@ -261,7 +304,8 @@ function entityToRoles(entity) {
                 rest,
                 groupCompany,
                 sr.href,
-                logoCompany
+                logoCompany,
+                groupEmployment
             );
         });
     }
@@ -269,7 +313,7 @@ function entityToRoles(entity) {
     // Single-role entity.
     const [title, ...rest] = headerLines;
     return [
-        classifyRole(title, rest, "", primaryHref, logoCompany)
+        classifyRole(title, rest, "", primaryHref, logoCompany, "")
     ];
 }
 
@@ -290,7 +334,7 @@ async function getExperience(page, profileUrl) {
     }
 
     await page
-        .locator('main a[href*="/company/"]')
+        .locator('main a[href*="/company/"], main a[href*="/school/"]')
         .first()
         .waitFor({ timeout: 20000 })
         .catch(() => {});
@@ -302,6 +346,10 @@ async function getExperience(page, profileUrl) {
 
     const current = roles.find(r => r.isCurrent) || roles[0] || null;
 
+    // companyLinkedinUrl for output: canonical org page (/company/ or /school/)
+    // companyAboutUrl for the About scraper (…/about/)
+    const rawOrgUrl = current ? current.companyUrl : "";
+
     return {
         currentPosition: current ? current.title : "",
         currentCompany: current ? current.company : "",
@@ -309,20 +357,21 @@ async function getExperience(page, profileUrl) {
         endDate: current ? current.endDate : "",
         duration: current ? current.duration : "",
         employmentType: current ? current.employmentType : "",
-        // Location as listed on the CURRENT role entry specifically (not
-        // the person's general profile location, and never a previous
-        // position's location — `current` is selected above via isCurrent,
-        // falling back to the topmost role only if nothing is flagged
-        // Present). Often blank: most LinkedIn users don't fill in a
-        // per-role location, in which case the caller falls back to the
-        // profile's own location.
         location: current ? current.location : "",
-        companyLinkedinUrl: current ? toCompanyAboutUrl(current.companyUrl) : "",
+        companyLinkedinUrl: toCompanyLinkedinUrl(rawOrgUrl) || toCompanyAboutUrl(rawOrgUrl).replace(/\/about\/?$/, "/") || "",
+        companyAboutUrl: toCompanyAboutUrl(rawOrgUrl),
         experiences: roles
     };
 }
 
 module.exports = {
     getExperience,
-    _internals: { classifyRole, parseDateLine, entityToRoles }
+    _internals: {
+        classifyRole,
+        parseDateLine,
+        entityToRoles,
+        isDateLine,
+        extractEmploymentType,
+        isSkillsLine
+    }
 };
