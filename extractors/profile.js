@@ -14,8 +14,8 @@ const log = require("../utils/logger");
  * as fallback (previously required a comma and dropped "India" / "United States").
  */
 
-/** Leading honorifics that must not become firstName (e.g. "Dr. Hitesh Bhatt"). */
-const LEADING_TITLE_RE = /^(dr|doctor|mr|mrs|ms|miss|mx|prof|professor|sir|dame|hon|rev|adv|er|ca)\.?$/i;
+/** Leading honorifics that must not become firstName (e.g. "Dr. Hitesh Bhatt", "Eng. Abdulmajeed"). */
+const LEADING_TITLE_RE = /^(dr|doctor|mr|mrs|ms|miss|mx|prof|professor|sir|dame|hon|rev|adv|er|ca|eng|engg|engr|engineer|ir|arch|ar)\.?$/i;
 
 /** Trailing degrees / certifications / generational suffixes — never lastName. */
 const TRAILING_SUFFIX_RE = /^(jr|sr|ii|iii|iv|v|phd|ph\.d|md|m\.d|mba|m\.b\.a|msa|m\.s\.a|mph|m\.p\.h|mpa|msc|m\.sc|ms|m\.s|llm|llb|bba|btech|b\.tech|mtech|m\.tech|miet|cfa|cpa|ca|esq|cissp|fmp|cfm|pmp|csm|cissp|pe|ra|aia|leed|leed\s*ap|cma|cia|cfe|frm|prm|shrm|phr|sphr|gphr|rn|np|do|dds|dmd|od|pharmd|jd|esq|ceng|cpeng|cping|peng|beng)\.?$/i;

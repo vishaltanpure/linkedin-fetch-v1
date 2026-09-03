@@ -59,6 +59,18 @@ test("strips titles, commas, degrees, middle initials", () => {
         firstName: "FADI",
         lastName: ""
     });
+    assert.deepStrictEqual(splitPersonName("Eng. Abdulmajeed Alshehri"), {
+        firstName: "Abdulmajeed",
+        lastName: "Alshehri"
+    });
+    assert.deepStrictEqual(splitPersonName("Engg Abdulmajeed Alshehri"), {
+        firstName: "Abdulmajeed",
+        lastName: "Alshehri"
+    });
+    assert.deepStrictEqual(splitPersonName("Eng Abdulmajeed Al-Shehri"), {
+        firstName: "Abdulmajeed",
+        lastName: "Al-Shehri"
+    });
 });
 
 test("keeps compound surnames, drops middle names", () => {
