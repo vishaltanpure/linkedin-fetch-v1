@@ -31,7 +31,8 @@ function collectCompanyAboutInPage() {
         { field: "industry", patterns: [/^(industry|sector|industria|branche)$/i] },
         { field: "employeeCount", patterns: [/^(company size|tamaño de la empresa|taille de l['’]entreprise|unternehmensgröße)$/i] },
         { field: "companyType", patterns: [/^(company type|tipo de empresa|type d['’]entreprise|unternehmenstyp)$/i] },
-        { field: "headquarters", patterns: [/^(headquarters|sede|siège social|hauptsitz)$/i] }
+        { field: "headquarters", patterns: [/^(headquarters|sede|siège social|hauptsitz)$/i] },
+        { field: "associatedMembers", patterns: [/^(associated members|miembros asociados|membres associés)$/i] }
     ];
 
     const matchField = label => {
@@ -101,6 +102,10 @@ function collectCompanyAboutInPage() {
             );
             if (sizeOnly) value = clean(sizeOnly[0]);
         }
+        if (field === "associatedMembers") {
+            const onlyDigits = value.match(/[\d,.]+/);
+            value = onlyDigits ? onlyDigits[0].replace(/[^\d]/g, "") : "";
+        }
         assign(field, value);
     }
 
@@ -159,7 +164,7 @@ function collectCompanyAboutInPage() {
     // Associated members — orphan line / nested under company size.
     if (!data.associatedMembers) {
         const match = mainText.match(
-            /([\d.,\s]+)\s*(associated members|miembros asociados|membres associés)/i
+            /(?:^|\b)([\d.,]+)\s*(associated members|miembros asociados|membres associés)\b/i
         );
         if (match) {
             data.associatedMembers = match[1].replace(/[^\d]/g, "");

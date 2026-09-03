@@ -52,9 +52,38 @@ const log = require("../utils/logger");
  * check that as a fallback when the top card only shows connections.
  */
 
+/** Leading honorifics that must not become firstName (e.g. "Dr. Hitesh Bhatt"). */
+const LEADING_TITLE_RE = /^(dr|doctor|mr|mrs|ms|miss|mx|prof|professor|sir|dame|hon|rev|adv|er|ca)\.?$/i;
+const TRAILING_SUFFIX_RE = /^(jr|sr|ii|iii|iv|v|phd|ph\.d|md|m\.d|mba|m\.b\.a|msc|m\.sc|ms|m\.s|btech|b\.tech|mtech|m\.tech|cfa|cpa|ca|esq)\.?$/i;
+
+/**
+ * "Dr. Hitesh Bhatt" → firstName=Hitesh, lastName=Bhatt
+ * "Hitesh Bhatt"     → firstName=Hitesh, lastName=Bhatt
+ */
+function splitPersonName(fullName) {
+    const parts = String(fullName || "")
+        .trim()
+        .split(/\s+/)
+        .map(part => part.replace(/^[,]+|[,]+$/g, ""))
+        .filter(Boolean);
+
+    while (parts.length > 1 && LEADING_TITLE_RE.test(parts[0].replace(/,+$/, ""))) {
+        parts.shift();
+    }
+
+    while (parts.length > 1 && TRAILING_SUFFIX_RE.test(parts[parts.length - 1])) {
+        parts.pop();
+    }
+
+    const firstName = (parts.shift() || "").replace(/,+$/g, "");
+    const lastName = parts.length ? parts[parts.length - 1].replace(/,+$/g, "") : "";
+    return { firstName, lastName };
+}
+
 function extractTopCardInPage(fullName) {
 
     const clean = s => (s || "").replace(/\s+/g, " ").trim();
+    const normalize = s => clean(s).toLowerCase();
 
     // Defined inside this function (not at module scope) because
     // page.evaluate() re-executes only this function's own source inside
@@ -74,36 +103,80 @@ function extractTopCardInPage(fullName) {
     );
 
     const isBadge = text => DEGREE_BADGE_PATTERN.test(text) || PRONOUN_BADGE_PATTERN.test(text);
+    const isCountLike = text => /^[\d,]+\+?\s*(followers?|connections?)$/i.test(text);
+    const isPlaceLike = text => {
+        if (!text) return false;
+        if (isCountLike(text)) return false;
+        if (/contact info/i.test(text)) return false;
+        if (text.length > 80) return false;
+        return /,/.test(text) || /\b(remote|hybrid|on-site|onsite)\b/i.test(text);
+    };
+    const uniq = arr => Array.from(new Set(arr.filter(Boolean)));
 
     const result = { headline: "", companyLine: "", pronouns: "", location: "", followers: "" };
-
-    // ---- headline + company/education line: first two non-badge <p> after the name h2 ----
-    const nodes = Array.from(document.querySelectorAll("main h2, main p"));
-    const nameIdx = nodes.findIndex(
-        el => el.tagName === "H2" && clean(el.textContent) === fullName
+    const nameNode = Array.from(document.querySelectorAll("main h1, main h2")).find(
+        el => clean(el.textContent) === fullName
     );
+    const topCard =
+        nameNode?.closest("section, article, main > div, main > section, div") ||
+        document.querySelector("main");
 
-    if (nameIdx !== -1) {
-        const followingRaw = nodes
-            .slice(nameIdx + 1)
-            .filter(el => el.tagName === "P")
-            .map(el => clean(el.textContent));
+    if (topCard) {
+        const pTexts = uniq(
+            Array.from(topCard.querySelectorAll("p, span"))
+                .map(el => clean(el.textContent))
+        );
 
-        const pronounMatch = followingRaw.find(text => PRONOUN_BADGE_PATTERN.test(text));
+        const pronounMatch = pTexts.find(text => PRONOUN_BADGE_PATTERN.test(text));
         result.pronouns = pronounMatch || "";
 
-        const following = followingRaw.filter(text => !isBadge(text));
+        const candidates = pTexts.filter(text =>
+            text &&
+            text !== fullName &&
+            !isBadge(text) &&
+            !isCountLike(text) &&
+            !/^message$/i.test(text) &&
+            !/^save$/i.test(text) &&
+            !/^more$/i.test(text) &&
+            !/^contact info$/i.test(text)
+        );
 
-        result.headline = following[0] || "";
-        result.companyLine = following[1] || "";
+        result.location =
+            candidates.find(isPlaceLike) ||
+            "";
+
+        result.headline =
+            candidates.find(text =>
+                !isPlaceLike(text) &&
+                !/·/.test(text) &&
+                text.length <= 180
+            ) ||
+            "";
+
+        result.companyLine =
+            candidates.find(text =>
+                normalize(text) !== normalize(result.headline) &&
+                normalize(text) !== normalize(result.location) &&
+                (text.includes("·") || /\bat\b/i.test(text))
+            ) ||
+            candidates.find(text =>
+                normalize(text) !== normalize(result.headline) &&
+                normalize(text) !== normalize(result.location) &&
+                !isPlaceLike(text)
+            ) ||
+            "";
     }
 
     // ---- location: anchored to the "Contact info" overlay link ----
     const contactLink = document.querySelector('a[href*="overlay/contact-info"]');
     if (contactLink) {
         const container = contactLink.closest("div");
-        const firstP = container ? container.querySelector("p") : null;
-        result.location = clean(firstP?.textContent);
+        const placeTexts = uniq(
+            Array.from(container?.querySelectorAll("p, span") || [])
+                .map(el => clean(el.textContent))
+                .filter(isPlaceLike)
+        );
+        if (placeTexts.length) result.location = placeTexts[0];
     }
 
     // ---- followers (not connections) ----
@@ -143,6 +216,15 @@ function extractTopCardInPage(fullName) {
         }
     }
 
+    if (!result.location && topCard) {
+        const fallbackPlaces = uniq(
+            Array.from(topCard.querySelectorAll('[class*="text-body-small"], p, span'))
+                .map(el => clean(el.textContent))
+                .filter(isPlaceLike)
+        );
+        result.location = fallbackPlaces[0] || "";
+    }
+
     return result;
 }
 
@@ -156,10 +238,7 @@ async function getProfile(page) {
             .textContent()
     ).trim();
 
-    const parts = fullName.split(" ");
-
-    const firstName = parts.shift() || "";
-    const lastName = parts.join(" ");
+    const { firstName, lastName } = splitPersonName(fullName);
 
     // Follower count often lives on the Activity card further down; nudge
     // lazy sections into view before reading the top card + Activity.
@@ -178,7 +257,9 @@ async function getProfile(page) {
     const followers = validateFollowers(topCard.followers, fullName);
 
     // "Aeromexico · Universidad Estatal del Valle de Ecatepec" -> company, education
-    const [companyName = "", education = ""] = topCard.companyLine
+    // If LinkedIn renders "Title at Company", only take the company side here.
+    const companyLineNormalized = (topCard.companyLine || "").replace(/\s+at\s+/i, " · ");
+    const [companyName = "", education = ""] = companyLineNormalized
         .split("·")
         .map(s => s.trim());
 
@@ -270,6 +351,8 @@ async function getProfile(page) {
 
 module.exports = {
 
-    getProfile
+    getProfile,
+
+    splitPersonName
 
 };

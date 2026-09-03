@@ -44,6 +44,29 @@ const { scanForKeywords } = require("./extractors/disease-keywords");
 const { getAppRoot } = require("./utils/app-root");
 const { isValidLinkedInProfileUrl, looksLikeEncodedProfileId } = require("./utils/linkedin-url");
 
+function inferRoleCompanyFromHeadline(headline) {
+    const text = String(headline || "").replace(/\s+/g, " ").trim();
+    if (!text) return { currentPosition: "", currentCompany: "" };
+
+    const atMatch = text.match(/^(.+?)\s+at\s+(.+)$/i);
+    if (atMatch) {
+        return {
+            currentPosition: atMatch[1].trim(),
+            currentCompany: atMatch[2].trim()
+        };
+    }
+
+    const dashMatch = text.match(/^(.+?)\s+[|-]\s+(.+)$/);
+    if (dashMatch) {
+        return {
+            currentPosition: dashMatch[1].trim(),
+            currentCompany: dashMatch[2].trim()
+        };
+    }
+
+    return { currentPosition: "", currentCompany: "" };
+}
+
 async function scrapeProfile(page, profileUrl) {
 
     // ---- 0. Validate the URL before touching the browser at all ----
@@ -146,6 +169,10 @@ async function scrapeProfile(page, profileUrl) {
         log.info(`No location on current role — using profile location for Onsite Address: "${profile.location}"`);
     }
 
+    const inferred = inferRoleCompanyFromHeadline(profile.headline);
+    const currentPosition = experience.currentPosition || inferred.currentPosition || "";
+    const currentCompany = experience.currentCompany || profile.companyName || inferred.currentCompany || "";
+
     // ---- Assemble the required output shape ----
     return {
         profileUrl,
@@ -161,8 +188,8 @@ async function scrapeProfile(page, profileUrl) {
         followers: profile.followers || "",
         education: profile.education || "",
         openToWork: profile.openToWork || false,
-        currentPosition: experience.currentPosition || "",
-        currentCompany: experience.currentCompany || "",
+        currentPosition,
+        currentCompany,
         duration: experience.duration || "",
         startDate: experience.startDate || "",
         endDate: experience.endDate || "",

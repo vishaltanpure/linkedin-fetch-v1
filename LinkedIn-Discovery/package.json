@@ -1,0 +1,14 @@
+{
+  "name": "linkedin-discovery",
+  "version": "1.0.0",
+  "description": "Discover new unique LinkedIn profiles from search criteria, with sheet-based deduplication. Reuses the parent linkedin-fetch-v1 scrape engine for the same output fields.",
+  "main": "discovery-app.js",
+  "scripts": {
+    "start": "node discovery-app.js",
+    "login": "node discovery-app.js --login",
+    "test:dedupe": "node scripts/test-dedupe.js"
+  },
+  "keywords": ["linkedin", "discovery", "search", "leads"],
+  "license": "ISC",
+  "private": true
+}

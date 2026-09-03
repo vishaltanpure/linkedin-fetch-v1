@@ -12,7 +12,8 @@
   "description": "",
   "dependencies": {
     "exceljs": "^4.4.0",
-    "playwright": "^1.61.1"
+    "playwright": "^1.61.1",
+    "xlsx": "^0.18.5"
   },
   "overrides": {
     "uuid": "^11.1.1"
