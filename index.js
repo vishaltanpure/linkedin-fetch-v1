@@ -43,6 +43,15 @@ const { getActivity } = require("./extractors/activity");
 const { scanForKeywords } = require("./extractors/disease-keywords");
 const { getAppRoot } = require("./utils/app-root");
 const { isValidLinkedInProfileUrl, looksLikeEncodedProfileId } = require("./utils/linkedin-url");
+const { profileNavGate } = require("./utils/nav-gate");
+
+/** Prefer www + https so we avoid an extra redirect before ACw→vanity. */
+function normalizeProfileUrl(url) {
+    return String(url || "")
+        .trim()
+        .replace(/^http:\/\//i, "https://")
+        .replace(/^https:\/\/linkedin\.com\//i, "https://www.linkedin.com/");
+}
 
 function inferRoleCompanyFromHeadline(headline) {
     const text = String(headline || "").replace(/\s+/g, " ").trim();
@@ -80,57 +89,63 @@ async function scrapeProfile(page, profileUrl) {
         );
     }
 
+    const navUrl = normalizeProfileUrl(profileUrl);
+
     // ---- 1. Profile page ----
-    await retry(() =>
-        page.goto(profileUrl, {
-            waitUntil: "domcontentloaded",
-            timeout: 60000
-        })
-    );
+    // Gate concurrent first-loads: ACw encoded IDs + headed Chromium freeze
+    // when many tabs navigate/redirect together (e.g. --concurrency=5).
+    const resolvedProfileUrl = await profileNavGate.withLock(async () => {
+        await retry(() =>
+            page.goto(navUrl, {
+                waitUntil: "domcontentloaded",
+                timeout: 60000
+            })
+        );
 
-    // The profile-not-found redirect (-> /404/) is client-side and can
-    // land shortly after "domcontentloaded", so these checks need to wait
-    // for the page to actually settle first. Rather than a blind fixed
-    // delay, wait for a signal that's only present on a real, fully
-    // rendered profile (the top card's "Contact info" link) — resolves
-    // as soon as it's ready instead of always waiting the same amount,
-    // and its absence (timeout) is itself consistent with a redirect
-    // having happened, so falling through to the URL checks below is
-    // still correct either way.
-    await page
-        .locator('a[href*="overlay/contact-info"]')
-        .first()
-        .waitFor({ timeout: 5500 })
-        .catch(() => {});
-
-    if (/\/(login|authwall|checkpoint)/.test(page.url())) {
-        throw new Error("Session expired — re-run login to refresh session/linkedin.json");
-    }
-
-    if (/\/404\/?$/.test(page.url())) {
-        throw new Error("Profile not found (LinkedIn redirected to 404)");
-    }
-
-    // The canonical URL as LinkedIn itself resolved it (identical to
-    // profileUrl for a standard vanity URL; the real /in/<slug>/ URL for
-    // an encoded-ID input). Every later navigation step derives its
-    // publicId from THIS, not from the original input string.
-    //
-    // For an encoded-ID input, the client-side redirect to the canonical
-    // vanity URL fires ~1s AFTER the content itself is ready (verified
-    // against live examples) — the "Contact info" wait above resolves
-    // too early to catch it. So: if the URL still looks encoded at this
-    // point, wait briefly for it to change before trusting it. If it
-    // never changes (redirect doesn't happen for some reason), fall back
-    // to whatever URL we have rather than failing the whole profile.
-    if (looksLikeEncodedProfileId(page.url())) {
-        const beforeRedirect = page.url();
+        // The profile-not-found redirect (-> /404/) is client-side and can
+        // land shortly after "domcontentloaded", so these checks need to wait
+        // for the page to actually settle first. Rather than a blind fixed
+        // delay, wait for a signal that's only present on a real, fully
+        // rendered profile (the top card's "Contact info" link) — resolves
+        // as soon as it's ready instead of always waiting the same amount,
+        // and its absence (timeout) is itself consistent with a redirect
+        // having happened, so falling through to the URL checks below is
+        // still correct either way.
         await page
-            .waitForURL(url => url.href !== beforeRedirect, { timeout: 3500 })
+            .locator('a[href*="overlay/contact-info"]')
+            .first()
+            .waitFor({ timeout: 5500 })
             .catch(() => {});
-    }
 
-    const resolvedProfileUrl = page.url();
+        if (/\/(login|authwall|checkpoint)/.test(page.url())) {
+            throw new Error("Session expired — re-run login to refresh session/linkedin.json");
+        }
+
+        if (/\/404\/?$/.test(page.url())) {
+            throw new Error("Profile not found (LinkedIn redirected to 404)");
+        }
+
+        // The canonical URL as LinkedIn itself resolved it (identical to
+        // profileUrl for a standard vanity URL; the real /in/<slug>/ URL for
+        // an encoded-ID input). Every later navigation step derives its
+        // publicId from THIS, not from the original input string.
+        //
+        // For an encoded-ID input, the client-side redirect to the canonical
+        // vanity URL fires ~1s AFTER the content itself is ready (verified
+        // against live examples) — the "Contact info" wait above resolves
+        // too early to catch it. So: if the URL still looks encoded at this
+        // point, wait briefly for it to change before trusting it. If it
+        // never changes (redirect doesn't happen for some reason), fall back
+        // to whatever URL we have rather than failing the whole profile.
+        if (looksLikeEncodedProfileId(page.url())) {
+            const beforeRedirect = page.url();
+            await page
+                .waitForURL(url => url.href !== beforeRedirect, { timeout: 3500 })
+                .catch(() => {});
+        }
+
+        return page.url();
+    });
 
     const profile = await retry(() => getProfile(page));
     log.success("Profile extracted");

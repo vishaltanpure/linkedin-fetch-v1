@@ -43,9 +43,13 @@ const CONFIG = {
     JOB_RETRY_BASE_DELAY_MS: int("JOB_RETRY_BASE_DELAY_MS", 3000),
 
     // Concurrent workers stagger their first request instead of all
-    // firing at once, so N tabs starting up doesn't look like a single
-    // burst of simultaneous requests.
-    WORKER_START_STAGGER_MS: int("WORKER_START_STAGGER_MS", 1500)
+    // firing at once. Higher than before so --concurrency=5 doesn't
+    // open five ACw profile shells in the same second (browser freeze).
+    WORKER_START_STAGGER_MS: int("WORKER_START_STAGGER_MS", 2500),
+
+    // Soft cap: above this we still honor --concurrency but log a warning.
+    // Encoded /in/ACw… batches are especially sensitive to high tab counts.
+    RECOMMENDED_MAX_TABS: int("RECOMMENDED_MAX_TABS", 3)
 };
 
 module.exports = CONFIG;

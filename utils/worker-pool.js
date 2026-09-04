@@ -94,6 +94,14 @@ async function processTable(context, table, session, concurrency = CONFIG.MAX_CO
     let nextIndex = 0;
     const effectiveConcurrency = Math.max(1, Math.min(concurrency, rows.length || 1));
 
+    if (effectiveConcurrency > CONFIG.RECOMMENDED_MAX_TABS) {
+        log.warning(
+            `Concurrency ${effectiveConcurrency} is high for headed LinkedIn (esp. ACw URLs). ` +
+            `Recommend ≤${CONFIG.RECOMMENDED_MAX_TABS}; navigations are gated to ` +
+            `${process.env.MAX_CONCURRENT_NAVS || 2} at a time to reduce browser freezes.`
+        );
+    }
+
     function blankRowFor(_inputRow, url) {
         return blankMappedRow(url);
     }
