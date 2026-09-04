@@ -144,13 +144,23 @@ function extractTopCardInPage(fullName) {
 
     // Precise locations usually have a comma; country-only is still valid.
     const PROFESSION_OR_TITLE =
-        /\b(officer|manager|director|engineer|architect|founder|consultant|analyst|specialist|executive|president|economist|scientist|researcher|professor|lecturer|physician|lawyer|attorney|accountant|auditor|banker|trader|designer|developer|nurse|teacher|quant|quantitative|ceo|cfo|cto|coo|vp|svp|evp|leader|head|lead|chief|partner|principal|owner|fractional|intern|associate|coordinator)\b/i;
+        /\b(officer|manager|director|engineer|architect|founder|consultant|analyst|specialist|executive|president|economist|scientist|researcher|professor|lecturer|physician|lawyer|attorney|accountant|auditor|banker|trader|designer|developer|nurse|teacher|quant|quantitative|ceo|cfo|cto|coo|vp|svp|evp|leader|head|lead|chief|partner|principal|owner|fractional|intern|associate|coordinator|advisor|adviser|investor|entrepreneur)\b/i;
 
     const isPrecisePlace = text => {
         if (!text || isCountLike(text) || /contact info/i.test(text)) return false;
         if (text.length > 90) return false;
-        if (PROFESSION_OR_TITLE.test(text) && !/,/.test(text)) return false;
+        // Job titles often contain commas:
+        // "Director Clinical Operations, UMMC Department of ..."
+        if (PROFESSION_OR_TITLE.test(text)) return false;
+        // "Company · School" is not a place
+        if (/[|·]/.test(text)) return false;
         return /,/.test(text) || /\b(remote|hybrid|on-site|onsite)\b/i.test(text);
+    };
+    // Top-card "University · School" line — never the person headline
+    const isCompanyEducationLine = text => {
+        if (!text || !text.includes("·")) return false;
+        const left = text.split("·")[0].trim();
+        return left.length >= 2 && !PROFESSION_OR_TITLE.test(left);
     };
     const isCountryOrRegion = text => {
         if (!text || isCountLike(text) || isPrecisePlace(text)) return false;
@@ -158,15 +168,10 @@ function extractTopCardInPage(fullName) {
         if (/[|·]/.test(text)) return false;
         if (/\d{4}/.test(text)) return false;
         // Never treat job titles / professions as places
-        // (bug: "Quantitative Economist" was classified as a region).
         if (PROFESSION_OR_TITLE.test(text)) return false;
-        // Known country / region names
-        if (/^(united states|united kingdom|saudi arabia|united arab emirates|uae|india|australia|canada|germany|france|singapore|china|japan|brazil|mexico|south africa|netherlands|ireland|new zealand|qatar|kuwait|bahrain|oman|egypt|nigeria|pakistan|bangladesh|indonesia|malaysia|thailand|vietnam|philippines|hong kong|taiwan|south korea|italy|spain|portugal|sweden|norway|denmark|finland|switzerland|austria|belgium|poland|turkey|israel|russia|ukraine|greater london|england|scotland|wales|california|texas|new york|florida|massachusetts|bavaria|munich)$/i.test(text)) {
-            return true;
-        }
-        // Single Title-Case token only (e.g. "Bavaria") — never multi-word
-        // titles like "Quantitative Economist".
-        return /^[A-Z][A-Za-z.'()-]+$/.test(text) && text.split(/\s+/).length === 1;
+        // Allowlist only — no Title-Case guessing (that rejected
+        // "Quantitative Economist", "Advisor", custom short headlines).
+        return /^(united states|united kingdom|saudi arabia|united arab emirates|uae|india|australia|canada|germany|france|singapore|china|japan|brazil|mexico|south africa|netherlands|ireland|new zealand|qatar|kuwait|bahrain|oman|egypt|nigeria|pakistan|bangladesh|indonesia|malaysia|thailand|vietnam|philippines|hong kong|taiwan|south korea|italy|spain|portugal|sweden|norway|denmark|finland|switzerland|austria|belgium|poland|turkey|israel|russia|ukraine|greater london|england|scotland|wales|california|texas|new york|florida|massachusetts|bavaria|munich|london|paris|berlin|dubai|riyadh|jeddah|doha|singapore|tokyo|sydney|melbourne|toronto|vancouver|chicago|boston|seattle|atlanta|houston|dallas|miami|denver|phoenix)$/i.test(text);
     };
 
     const uniq = arr => Array.from(new Set(arr.filter(Boolean)));
@@ -193,10 +198,6 @@ function extractTopCardInPage(fullName) {
             .replace(/\s+/g, " ")
             .trim();
     };
-
-    // Heuristic: job-title-ish headlines (VP, Director, Economist, …)
-    const looksLikeTitle = text =>
-        /\b(vice\s+president|president|director|manager|officer|engineer|architect|founder|consultant|analyst|specialist|executive|leader|head|lead|chief|partner|principal|owner|ceo|cfo|cto|coo|vp|svp|evp|fractional|economist|scientist|researcher|professor|lecturer|lawyer|attorney|accountant|auditor|designer|developer|quant|quantitative)\b/i.test(text);
 
     const result = { headline: "", companyLine: "", pronouns: "", location: "", followers: "" };
 
@@ -250,26 +251,28 @@ function extractTopCardInPage(fullName) {
         );
 
         if (!result.headline) {
-            // 1) Pipe / keyword headline (Chi Chung HAU style)
-            // 2) Short title-like line (never About prose — filtered above)
-            // 3) First short non-place / non-company line
+            // LinkedIn top-card order after name: headline, then company · edu,
+            // then location. Take the FIRST usable non-place line — including
+            // headlines that contain "·" or " at " (very common).
+            const isHeadlineCandidate = t =>
+                !isPrecisePlace(t) &&
+                !isCountryOrRegion(t) &&
+                !isCompanyEducationLine(t) &&
+                t.length >= 3 &&
+                t.length <= HEADLINE_MAX;
+
             result.headline =
-                usable.find(t => t.includes("|") && t.length >= 12 && t.length <= HEADLINE_MAX) ||
-                usable.find(t => looksLikeTitle(t) && !isPrecisePlace(t) && !/·/.test(t) && t.length <= HEADLINE_MAX) ||
-                usable.find(t =>
-                    !isPrecisePlace(t) &&
-                    !isCountryOrRegion(t) &&
-                    !/·/.test(t) &&
-                    t.length >= 8 &&
-                    t.length <= HEADLINE_MAX
-                ) ||
+                usable.find(t => t.includes("|") && isHeadlineCandidate(t)) ||
+                usable.find(t => isHeadlineCandidate(t) && !t.includes("·")) ||
+                usable.find(isHeadlineCandidate) ||
                 "";
         }
 
+        // Company/education line uses a middot between two orgs.
         result.companyLine =
             usable.find(t =>
                 normalize(t) !== normalize(result.headline) &&
-                (t.includes("·") || /\bat\b/i.test(t))
+                (isCompanyEducationLine(t) || t.includes("·"))
             ) || "";
     }
 
@@ -288,14 +291,12 @@ function extractTopCardInPage(fullName) {
             !/^contact info$/i.test(t) &&
             !isPrecisePlace(t) &&
             !isCountryOrRegion(t) &&
-            !/·/.test(t) &&
             t.length <= HEADLINE_MAX
         );
 
         result.headline =
-            medium.find(t => t.includes("|") && t.length >= 12) ||
-            medium.find(looksLikeTitle) ||
-            medium.find(t => t.length >= 8) ||
+            medium.find(t => t.includes("|") && t.length >= 3) ||
+            medium.find(t => t.length >= 3) ||
             "";
     }
 
@@ -306,7 +307,7 @@ function extractTopCardInPage(fullName) {
         result.companyLine =
             pTexts.find(t =>
                 normalize(t) !== normalize(result.headline) &&
-                (t.includes("·") || /\bat\b/i.test(t))
+                t.includes("·")
             ) || "";
     }
 
@@ -470,17 +471,16 @@ async function getProfile(page) {
 
 /**
  * Node-side mirror of top-card headline selection (for tests / debugging).
- * Filters out badges, places, UI noise, and About prose the same way the
- * in-page extractor does — so "Quantitative Economist" is kept and
- * "Munich, Bavaria, Germany" is not.
+ *
+ * LinkedIn top-card order after the name is: headline → company · edu →
+ * location. First usable non-place line wins (including "Title at Company"
+ * and lines with "·"). Company/education is the middot line only.
  */
 function pickHeadlineFromCandidates(candidates) {
     const clean = s => String(s || "").replace(/\s+/g, " ").trim();
     const HEADLINE_MAX = 220;
     const PROFESSION_OR_TITLE =
-        /\b(officer|manager|director|engineer|architect|founder|consultant|analyst|specialist|executive|president|economist|scientist|researcher|professor|lecturer|physician|lawyer|attorney|accountant|auditor|banker|trader|designer|developer|nurse|teacher|quant|quantitative|ceo|cfo|cto|coo|vp|svp|evp|leader|head|lead|chief|partner|principal|owner|fractional|intern|associate|coordinator)\b/i;
-    const looksLikeTitle = text =>
-        /\b(vice\s+president|president|director|manager|officer|engineer|architect|founder|consultant|analyst|specialist|executive|leader|head|lead|chief|partner|principal|owner|ceo|cfo|cto|coo|vp|svp|evp|fractional|economist|scientist|researcher|professor|lecturer|lawyer|attorney|accountant|auditor|designer|developer|quant|quantitative)\b/i.test(text);
+        /\b(officer|manager|director|engineer|architect|founder|consultant|analyst|specialist|executive|president|economist|scientist|researcher|professor|lecturer|physician|lawyer|attorney|accountant|auditor|banker|trader|designer|developer|nurse|teacher|quant|quantitative|ceo|cfo|cto|coo|vp|svp|evp|leader|head|lead|chief|partner|principal|owner|fractional|intern|associate|coordinator|advisor|adviser|investor|entrepreneur)\b/i;
     const isBadge = text => /^(·\s*)?\d+(st|nd|rd|th)\+?$/i.test(text);
     const isCountLike = text =>
         /^[\d,]+\+?\s*(followers?|connections?)$/i.test(text) ||
@@ -498,8 +498,14 @@ function pickHeadlineFromCandidates(candidates) {
     const isPrecisePlace = text => {
         if (!text || isCountLike(text) || /contact info/i.test(text)) return false;
         if (text.length > 90) return false;
-        if (PROFESSION_OR_TITLE.test(text) && !/,/.test(text)) return false;
+        if (PROFESSION_OR_TITLE.test(text)) return false;
+        if (/[|·]/.test(text)) return false;
         return /,/.test(text) || /\b(remote|hybrid|on-site|onsite)\b/i.test(text);
+    };
+    const isCompanyEducationLine = text => {
+        if (!text || !text.includes("·")) return false;
+        const left = text.split("·")[0].trim();
+        return left.length >= 2 && !PROFESSION_OR_TITLE.test(left);
     };
     const isCountryOrRegion = text => {
         if (!text || isCountLike(text) || isPrecisePlace(text)) return false;
@@ -507,10 +513,7 @@ function pickHeadlineFromCandidates(candidates) {
         if (/[|·]/.test(text)) return false;
         if (/\d{4}/.test(text)) return false;
         if (PROFESSION_OR_TITLE.test(text)) return false;
-        if (/^(united states|united kingdom|saudi arabia|united arab emirates|uae|india|australia|canada|germany|france|singapore|china|japan|brazil|mexico|south africa|netherlands|ireland|new zealand|qatar|kuwait|bahrain|oman|egypt|nigeria|pakistan|bangladesh|indonesia|malaysia|thailand|vietnam|philippines|hong kong|taiwan|south korea|italy|spain|portugal|sweden|norway|denmark|finland|switzerland|austria|belgium|poland|turkey|israel|russia|ukraine|greater london|england|scotland|wales|california|texas|new york|florida|massachusetts|bavaria|munich)$/i.test(text)) {
-            return true;
-        }
-        return /^[A-Z][A-Za-z.'()-]+$/.test(text) && text.split(/\s+/).length === 1;
+        return /^(united states|united kingdom|saudi arabia|united arab emirates|uae|india|australia|canada|germany|france|singapore|china|japan|brazil|mexico|south africa|netherlands|ireland|new zealand|qatar|kuwait|bahrain|oman|egypt|nigeria|pakistan|bangladesh|indonesia|malaysia|thailand|vietnam|philippines|hong kong|taiwan|south korea|italy|spain|portugal|sweden|norway|denmark|finland|switzerland|austria|belgium|poland|turkey|israel|russia|ukraine|greater london|england|scotland|wales|california|texas|new york|florida|massachusetts|bavaria|munich|london|paris|berlin|dubai|riyadh|jeddah|doha|tokyo|sydney|melbourne|toronto|vancouver|chicago|boston|seattle|atlanta|houston|dallas|miami|denver|phoenix)$/i.test(text);
     };
 
     const usable = (candidates || [])
@@ -524,16 +527,17 @@ function pickHeadlineFromCandidates(candidates) {
             !/^contact info$/i.test(t)
         );
 
+    const isHeadlineCandidate = t =>
+        !isPrecisePlace(t) &&
+        !isCountryOrRegion(t) &&
+        !isCompanyEducationLine(t) &&
+        t.length >= 3 &&
+        t.length <= HEADLINE_MAX;
+
     return (
-        usable.find(t => t.includes("|") && t.length >= 12 && t.length <= HEADLINE_MAX) ||
-        usable.find(t => looksLikeTitle(t) && !isPrecisePlace(t) && !/·/.test(t) && t.length <= HEADLINE_MAX) ||
-        usable.find(t =>
-            !isPrecisePlace(t) &&
-            !isCountryOrRegion(t) &&
-            !/·/.test(t) &&
-            t.length >= 8 &&
-            t.length <= HEADLINE_MAX
-        ) ||
+        usable.find(t => t.includes("|") && isHeadlineCandidate(t)) ||
+        usable.find(t => isHeadlineCandidate(t) && !t.includes("·")) ||
+        usable.find(isHeadlineCandidate) ||
         ""
     );
 }

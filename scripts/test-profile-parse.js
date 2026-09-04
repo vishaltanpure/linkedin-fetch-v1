@@ -128,6 +128,81 @@ test("Lena-style profession headline is not treated as location", () => {
     assert.strictEqual(headline, "Quantitative Economist");
 });
 
+test("structural first usable line wins for short/custom headlines", () => {
+    assert.strictEqual(
+        pickHeadlineFromCandidates([
+            "Advisor",
+            "Acme Corp · Harvard",
+            "Boston, Massachusetts, United States"
+        ]),
+        "Advisor"
+    );
+    assert.strictEqual(
+        pickHeadlineFromCandidates([
+            "Helping teams ship faster",
+            "Stripe · Stanford University",
+            "San Francisco, California, United States"
+        ]),
+        "Helping teams ship faster"
+    );
+    assert.strictEqual(
+        pickHeadlineFromCandidates([
+            "AI GPU leader | Revenue Growth | GSI | Enterprise",
+            "Supermicro · Cambridge Judge Business School",
+            "London Area, United Kingdom"
+        ]),
+        "AI GPU leader | Revenue Growth | GSI | Enterprise"
+    );
+    // Country-only line must not win over a real headline after it
+    assert.strictEqual(
+        pickHeadlineFromCandidates([
+            "Germany",
+            "Quantitative Economist",
+            "Munich, Bavaria, Germany"
+        ]),
+        "Quantitative Economist"
+    );
+    // Common LinkedIn "Title at Company" headline must not be skipped
+    assert.strictEqual(
+        pickHeadlineFromCandidates([
+            "Ambulatory Operations Director at University of Mississippi Medical Center",
+            "University of Mississippi Medical Center · University of Mississippi",
+            "Jackson, Mississippi, United States"
+        ]),
+        "Ambulatory Operations Director at University of Mississippi Medical Center"
+    );
+    // Headline may itself contain a middot (title · specialty)
+    assert.strictEqual(
+        pickHeadlineFromCandidates([
+            "Sales Manager · Electronics Distribution",
+            "ACE Electronics, Inc. · Something School",
+            "Miami, Florida, United States"
+        ]),
+        "Sales Manager · Electronics Distribution"
+    );
+    // Comma in headline must not be treated as a location (Lindsay Avent Jay)
+    assert.strictEqual(
+        pickHeadlineFromCandidates([
+            "Director Clinical Operations, UMMC Department of Psychiatry and Human Behavior",
+            "University of Mississippi Medical Center · Mississippi State University",
+            "Brandon, Mississippi, United States"
+        ]),
+        "Director Clinical Operations, UMMC Department of Psychiatry and Human Behavior"
+    );
+});
+
+test("does not reject headline when mis-parsed companyName looks like a job title", () => {
+    assert.strictEqual(
+        validateHeadline(
+            "Ambulatory Operations Director at University of Mississippi Medical Center",
+            "test",
+            "Ambulatory Operations Director",
+            "Jackson, Mississippi, United States"
+        ),
+        "Ambulatory Operations Director at University of Mississippi Medical Center"
+    );
+});
+
 test("school and company org URLs", () => {
     assert.strictEqual(
         toCompanyAboutUrl("https://www.linkedin.com/school/university-of-mississippi-medical-center/"),

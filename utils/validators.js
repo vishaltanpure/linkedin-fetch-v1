@@ -71,8 +71,13 @@ function validateHeadline(headline, context, companyName, location) {
         return "";
     }
     if (companyName && normalize(trimmed) === normalize(companyName)) {
-        log.warning(`[${context}] Rejected headline "${headline}" — identical to the company name`);
-        return "";
+        // Only reject when companyName looks like an org, not a job title
+        // that was mis-parsed from "Title at Company" headlines.
+        const looksLikeJobTitle = /\b(director|manager|officer|engineer|analyst|specialist|consultant|president|executive|lead|head|chief|coordinator|scientist|economist|architect|founder)\b/i.test(companyName);
+        if (!looksLikeJobTitle) {
+            log.warning(`[${context}] Rejected headline "${headline}" — identical to the company name`);
+            return "";
+        }
     }
     if (location && normalize(trimmed) === normalize(location)) {
         log.warning(`[${context}] Rejected headline "${headline}" — identical to the location`);

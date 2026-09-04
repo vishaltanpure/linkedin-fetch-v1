@@ -173,9 +173,13 @@ async function scrapeProfile(page, profileUrl) {
     const currentPosition = experience.currentPosition || inferred.currentPosition || "";
     const currentCompany = experience.currentCompany || profile.companyName || inferred.currentCompany || "";
 
-    // If top-card headline failed (credentials in name break DOM match),
-    // fall back to the current job title from Experience.
+    // Prefer top-card headline. If missing, fall back to current job title
+    // (many profiles set HEADLINE = role). Experience still fills DESIGNATION
+    // separately — distinct headlines are kept when top-card extraction works.
     const headline = profile.headline || currentPosition || "";
+    if (!profile.headline && currentPosition) {
+        log.info(`Top-card headline empty — using current role for HEADLINE: "${currentPosition}"`);
+    }
 
     // Past role = first non-current experience entry (if any)
     const past =
