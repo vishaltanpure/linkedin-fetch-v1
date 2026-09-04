@@ -3,7 +3,7 @@
  *   node scripts/test-profile-parse.js
  */
 const assert = require("assert");
-const { splitPersonName } = require("../extractors/profile");
+const { splitPersonName, pickHeadlineFromCandidates } = require("../extractors/profile");
 const {
     toCompanyAboutUrl,
     toCompanyLinkedinUrl
@@ -113,6 +113,19 @@ test("rejects connections/followers UI as headline", () => {
     const real =
         "Helping Luxury Membership Businesses Unlock Hidden Lifetime Value in Their Member Base | Creator of The Member Revenue Architecture System™";
     assert.ok(validateHeadline(real, "test").includes("Luxury Membership"));
+});
+
+test("Lena-style profession headline is not treated as location", () => {
+    const headline = pickHeadlineFromCandidates([
+        "· 3rd",
+        "Quantitative Economist",
+        "Swiss Life Deutschland · LMU Munich",
+        "Munich, Bavaria, Germany",
+        "Contact info",
+        "500+ connections",
+        "Data Scientist Technical Accounting"
+    ]);
+    assert.strictEqual(headline, "Quantitative Economist");
 });
 
 test("school and company org URLs", () => {

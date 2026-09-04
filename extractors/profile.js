@@ -143,9 +143,13 @@ function extractTopCardInPage(fullName) {
         DIALOG_CHROME.test(text);
 
     // Precise locations usually have a comma; country-only is still valid.
+    const PROFESSION_OR_TITLE =
+        /\b(officer|manager|director|engineer|architect|founder|consultant|analyst|specialist|executive|president|economist|scientist|researcher|professor|lecturer|physician|lawyer|attorney|accountant|auditor|banker|trader|designer|developer|nurse|teacher|quant|quantitative|ceo|cfo|cto|coo|vp|svp|evp|leader|head|lead|chief|partner|principal|owner|fractional|intern|associate|coordinator)\b/i;
+
     const isPrecisePlace = text => {
         if (!text || isCountLike(text) || /contact info/i.test(text)) return false;
         if (text.length > 90) return false;
+        if (PROFESSION_OR_TITLE.test(text) && !/,/.test(text)) return false;
         return /,/.test(text) || /\b(remote|hybrid|on-site|onsite)\b/i.test(text);
     };
     const isCountryOrRegion = text => {
@@ -153,9 +157,16 @@ function extractTopCardInPage(fullName) {
         if (text.length < 3 || text.length > 60) return false;
         if (/[|·]/.test(text)) return false;
         if (/\d{4}/.test(text)) return false;
-        // Single/multi-word place names without looking like a job title
-        return /^(united states|united kingdom|saudi arabia|united arab emirates|uae|india|australia|canada|germany|france|singapore|china|japan|brazil|mexico|south africa|netherlands|ireland|new zealand|qatar|kuwait|bahrain|oman|egypt|nigeria|pakistan|bangladesh|indonesia|malaysia|thailand|vietnam|philippines|hong kong|taiwan|south korea|italy|spain|portugal|sweden|norway|denmark|finland|switzerland|austria|belgium|poland|turkey|israel|russia|ukraine|greater london|england|scotland|wales|california|texas|new york|florida|massachusetts)$/i.test(text)
-            || (/^[A-Z][A-Za-z .'()-]+$/.test(text) && text.split(" ").length <= 4 && !/\b(officer|manager|director|engineer|founder|consultant|analyst|specialist|executive|president|ceo|cfo|cto|vp)\b/i.test(text));
+        // Never treat job titles / professions as places
+        // (bug: "Quantitative Economist" was classified as a region).
+        if (PROFESSION_OR_TITLE.test(text)) return false;
+        // Known country / region names
+        if (/^(united states|united kingdom|saudi arabia|united arab emirates|uae|india|australia|canada|germany|france|singapore|china|japan|brazil|mexico|south africa|netherlands|ireland|new zealand|qatar|kuwait|bahrain|oman|egypt|nigeria|pakistan|bangladesh|indonesia|malaysia|thailand|vietnam|philippines|hong kong|taiwan|south korea|italy|spain|portugal|sweden|norway|denmark|finland|switzerland|austria|belgium|poland|turkey|israel|russia|ukraine|greater london|england|scotland|wales|california|texas|new york|florida|massachusetts|bavaria|munich)$/i.test(text)) {
+            return true;
+        }
+        // Single Title-Case token only (e.g. "Bavaria") — never multi-word
+        // titles like "Quantitative Economist".
+        return /^[A-Z][A-Za-z.'()-]+$/.test(text) && text.split(/\s+/).length === 1;
     };
 
     const uniq = arr => Array.from(new Set(arr.filter(Boolean)));
@@ -183,9 +194,9 @@ function extractTopCardInPage(fullName) {
             .trim();
     };
 
-    // Heuristic: job-title-ish headlines (VP, Director, Manager, leader, …)
+    // Heuristic: job-title-ish headlines (VP, Director, Economist, …)
     const looksLikeTitle = text =>
-        /\b(vice\s+president|president|director|manager|officer|engineer|architect|founder|consultant|analyst|specialist|executive|leader|head|lead|chief|partner|principal|owner|ceo|cfo|cto|coo|vp|svp|evp|fractional)\b/i.test(text);
+        /\b(vice\s+president|president|director|manager|officer|engineer|architect|founder|consultant|analyst|specialist|executive|leader|head|lead|chief|partner|principal|owner|ceo|cfo|cto|coo|vp|svp|evp|fractional|economist|scientist|researcher|professor|lecturer|lawyer|attorney|accountant|auditor|designer|developer|quant|quantitative)\b/i.test(text);
 
     const result = { headline: "", companyLine: "", pronouns: "", location: "", followers: "" };
 
@@ -457,7 +468,78 @@ async function getProfile(page) {
     };
 }
 
+/**
+ * Node-side mirror of top-card headline selection (for tests / debugging).
+ * Filters out badges, places, UI noise, and About prose the same way the
+ * in-page extractor does — so "Quantitative Economist" is kept and
+ * "Munich, Bavaria, Germany" is not.
+ */
+function pickHeadlineFromCandidates(candidates) {
+    const clean = s => String(s || "").replace(/\s+/g, " ").trim();
+    const HEADLINE_MAX = 220;
+    const PROFESSION_OR_TITLE =
+        /\b(officer|manager|director|engineer|architect|founder|consultant|analyst|specialist|executive|president|economist|scientist|researcher|professor|lecturer|physician|lawyer|attorney|accountant|auditor|banker|trader|designer|developer|nurse|teacher|quant|quantitative|ceo|cfo|cto|coo|vp|svp|evp|leader|head|lead|chief|partner|principal|owner|fractional|intern|associate|coordinator)\b/i;
+    const looksLikeTitle = text =>
+        /\b(vice\s+president|president|director|manager|officer|engineer|architect|founder|consultant|analyst|specialist|executive|leader|head|lead|chief|partner|principal|owner|ceo|cfo|cto|coo|vp|svp|evp|fractional|economist|scientist|researcher|professor|lecturer|lawyer|attorney|accountant|auditor|designer|developer|quant|quantitative)\b/i.test(text);
+    const isBadge = text => /^(·\s*)?\d+(st|nd|rd|th)\+?$/i.test(text);
+    const isCountLike = text =>
+        /^[\d,]+\+?\s*(followers?|connections?)$/i.test(text) ||
+        /^(followers?|connections?)$/i.test(text);
+    const isUiNoise = text =>
+        /^(this is a\b|see more|show more|show less|message|connect|connections?|follow|followers?|save|more|contact info|open to work|premium|visit my website)$/i.test(text) ||
+        /^(this is a modal|beginning of dialog|end of dialog)/i.test(text);
+    const isAboutLike = text => {
+        if (!text) return false;
+        if (text.length > HEADLINE_MAX) return true;
+        if (/\b(see more|…\s*more|\.{3}\s*more)\s*$/i.test(text)) return true;
+        if (text.length > 140 && (text.match(/[.!?]/g) || []).length >= 2) return true;
+        return false;
+    };
+    const isPrecisePlace = text => {
+        if (!text || isCountLike(text) || /contact info/i.test(text)) return false;
+        if (text.length > 90) return false;
+        if (PROFESSION_OR_TITLE.test(text) && !/,/.test(text)) return false;
+        return /,/.test(text) || /\b(remote|hybrid|on-site|onsite)\b/i.test(text);
+    };
+    const isCountryOrRegion = text => {
+        if (!text || isCountLike(text) || isPrecisePlace(text)) return false;
+        if (text.length < 3 || text.length > 60) return false;
+        if (/[|·]/.test(text)) return false;
+        if (/\d{4}/.test(text)) return false;
+        if (PROFESSION_OR_TITLE.test(text)) return false;
+        if (/^(united states|united kingdom|saudi arabia|united arab emirates|uae|india|australia|canada|germany|france|singapore|china|japan|brazil|mexico|south africa|netherlands|ireland|new zealand|qatar|kuwait|bahrain|oman|egypt|nigeria|pakistan|bangladesh|indonesia|malaysia|thailand|vietnam|philippines|hong kong|taiwan|south korea|italy|spain|portugal|sweden|norway|denmark|finland|switzerland|austria|belgium|poland|turkey|israel|russia|ukraine|greater london|england|scotland|wales|california|texas|new york|florida|massachusetts|bavaria|munich)$/i.test(text)) {
+            return true;
+        }
+        return /^[A-Z][A-Za-z.'()-]+$/.test(text) && text.split(/\s+/).length === 1;
+    };
+
+    const usable = (candidates || [])
+        .map(clean)
+        .filter(t =>
+            t &&
+            !isBadge(t) &&
+            !isCountLike(t) &&
+            !isUiNoise(t) &&
+            !isAboutLike(t) &&
+            !/^contact info$/i.test(t)
+        );
+
+    return (
+        usable.find(t => t.includes("|") && t.length >= 12 && t.length <= HEADLINE_MAX) ||
+        usable.find(t => looksLikeTitle(t) && !isPrecisePlace(t) && !/·/.test(t) && t.length <= HEADLINE_MAX) ||
+        usable.find(t =>
+            !isPrecisePlace(t) &&
+            !isCountryOrRegion(t) &&
+            !/·/.test(t) &&
+            t.length >= 8 &&
+            t.length <= HEADLINE_MAX
+        ) ||
+        ""
+    );
+}
+
 module.exports = {
     getProfile,
-    splitPersonName
+    splitPersonName,
+    pickHeadlineFromCandidates
 };
