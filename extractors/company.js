@@ -200,7 +200,7 @@ async function getCompanyAbout(page, aboutUrl) {
     await page
         .locator("main p, dt, main h2")
         .first()
-        .waitFor({ timeout: 15000 })
+        .waitFor({ timeout: 8000 })
         .catch(() => {});
 
     await page.evaluate(() => window.scrollBy(0, 700)).catch(() => {});
@@ -209,7 +209,7 @@ async function getCompanyAbout(page, aboutUrl) {
     await page
         .getByText(/^(Website|Industry|Company size|Headquarters|Sitio web|Sector)$/i)
         .first()
-        .waitFor({ timeout: 8000 })
+        .waitFor({ timeout: 5000 })
         .catch(() => {});
 
     const data = await page.evaluate(collectCompanyAboutInPage).catch(() => empty);

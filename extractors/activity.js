@@ -172,7 +172,7 @@ function collectActivityInPage() {
     }).filter(i => i.fullText && (i.postedAgoText || i.commentary || i.headerText || i.fullText.length > 40));
 }
 
-async function loadActivityTab(page, publicId, tab, waitTimeoutMs = 10000) {
+async function loadActivityTab(page, publicId, tab, waitTimeoutMs = 5000) {
 
     await page.goto(`https://www.linkedin.com/in/${publicId}/recent-activity/${tab}/`, {
         waitUntil: "domcontentloaded",
@@ -190,11 +190,6 @@ async function loadActivityTab(page, publicId, tab, waitTimeoutMs = 10000) {
         .catch(() => {});
 
     await page.evaluate(() => window.scrollBy(0, 400)).catch(() => {});
-    await page
-        .locator(ACTIVITY_ITEM_SELECTOR)
-        .first()
-        .waitFor({ timeout: Math.min(4000, waitTimeoutMs) })
-        .catch(() => {});
 
     return page.evaluate(collectActivityInPage).catch(() => []);
 }
@@ -239,21 +234,16 @@ async function getActivity(page, profileUrl) {
         return buildResult(allItems);
     }
 
-    let best = null;
-    let bestAgeDays = Infinity;
-
+    // Empty /all/: try fallback tabs and return the first that has items
+    // (avoids always burning 3× full waits on inactive profiles).
     for (const tab of FALLBACK_TABS) {
-        const items = await loadActivityTab(page, publicId, tab, 6000);
-        if (items.length === 0) continue;
-
-        const ageDays = parseRelativeAgeInDays(items[0].postedAgoText);
-        if (ageDays < bestAgeDays) {
-            best = items;
-            bestAgeDays = ageDays;
+        const items = await loadActivityTab(page, publicId, tab, 3000);
+        if (items.length > 0) {
+            return buildResult(items);
         }
     }
 
-    return buildResult(best || []);
+    return buildResult([]);
 }
 
 module.exports = {

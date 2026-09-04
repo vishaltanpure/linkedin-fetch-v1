@@ -7,6 +7,40 @@
 
 const ExcelJS = require("exceljs");
 
+/**
+ * ExcelJS returns hyperlinks / rich text / formulas as objects.
+ * String(cell.value) → "[object Object]" which then lands in Linkedin Contact.
+ */
+function cellValueToString(value) {
+    if (value === null || value === undefined) return "";
+    if (typeof value === "string") return value.trim();
+    if (typeof value === "number" || typeof value === "boolean") return String(value);
+    if (value instanceof Date) return value.toISOString();
+
+    if (typeof value === "object") {
+        // Hyperlink cell: { text, hyperlink }
+        if (value.hyperlink || value.text != null) {
+            const link = value.hyperlink != null ? String(value.hyperlink).trim() : "";
+            const text = value.text != null ? String(value.text).trim() : "";
+            if (/linkedin\.com/i.test(link)) return link;
+            if (/linkedin\.com/i.test(text)) return text;
+            return link || text || "";
+        }
+        // Rich text runs
+        if (Array.isArray(value.richText)) {
+            return value.richText.map(t => (t && t.text) || "").join("").trim();
+        }
+        // Formula with cached result
+        if (value.result !== undefined && value.result !== null) {
+            return cellValueToString(value.result);
+        }
+        if (value.error) return "";
+    }
+
+    const asString = String(value).trim();
+    return asString === "[object Object]" ? "" : asString;
+}
+
 // Read every sheet into { name, headers, rows: [{header: value, ...}] }.
 async function readWorkbook(filePath) {
 
@@ -21,7 +55,7 @@ async function readWorkbook(filePath) {
         const headers = [];
 
         headerRow.eachCell({ includeEmpty: false }, cell => {
-            headers.push(String(cell.value ?? "").trim());
+            headers.push(cellValueToString(cell.value));
         });
 
         const rows = [];
@@ -35,9 +69,7 @@ async function readWorkbook(filePath) {
 
             headers.forEach((header, idx) => {
                 const cell = row.getCell(idx + 1);
-                const value = cell.value === null || cell.value === undefined
-                    ? ""
-                    : String(cell.value);
+                const value = cellValueToString(cell.value);
                 obj[header] = value;
                 if (value !== "") hasValue = true;
             });
@@ -68,7 +100,12 @@ async function writeWorkbook(filePath, sheets) {
         worksheet.getRow(1).font = { bold: true };
 
         for (const row of sheet.rows) {
-            worksheet.addRow(row);
+            // Force plain strings so Excel never stores accidental objects
+            const plain = {};
+            for (const header of sheet.headers) {
+                plain[header] = cellValueToString(row[header]);
+            }
+            worksheet.addRow(plain);
         }
     }
 
@@ -77,5 +114,6 @@ async function writeWorkbook(filePath, sheets) {
 
 module.exports = {
     readWorkbook,
-    writeWorkbook
+    writeWorkbook,
+    cellValueToString
 };

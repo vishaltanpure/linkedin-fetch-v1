@@ -336,7 +336,7 @@ async function getExperience(page, profileUrl) {
     await page
         .locator('main a[href*="/company/"], main a[href*="/school/"]')
         .first()
-        .waitFor({ timeout: 20000 })
+        .waitFor({ timeout: 12000 })
         .catch(() => {});
 
     await scroll.gentle(page);

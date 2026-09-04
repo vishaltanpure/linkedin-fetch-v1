@@ -60,6 +60,18 @@ function validateHeadline(headline, context, companyName, location) {
         log.warning(`[${context}] Rejected headline "${headline}" — looks like a follower/connection label`);
         return "";
     }
+    // Top-card "Company · School" org pair is never a person headline
+    if (trimmed.includes("·")) {
+        const left = trimmed.split("·")[0].trim();
+        const looksLikeJob =
+            /\b(director|manager|officer|engineer|analyst|specialist|consultant|president|executive|lead|head|chief|coordinator|scientist|economist|architect|founder|sales|operations|clinical)\b/i.test(
+                left
+            );
+        if (!looksLikeJob) {
+            log.warning(`[${context}] Rejected headline "${headline}" — looks like company · education line`);
+            return "";
+        }
+    }
     // About section prose (LinkedIn headline max is 220 chars)
     if (
         trimmed.length > 220 ||

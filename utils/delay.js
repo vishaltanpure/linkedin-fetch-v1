@@ -24,8 +24,10 @@ async function medium(page) {
 
 async function long(page) {
 
+    // Inter-job / discovery pacing — kept shorter than before (was 3.5–6s)
+    // to cut batch time without removing human-like gaps entirely.
     await page.waitForTimeout(
-        random(3500, 6000)
+        random(1800, 3200)
     );
 
 }

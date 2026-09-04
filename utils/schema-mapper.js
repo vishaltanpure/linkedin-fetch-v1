@@ -84,19 +84,37 @@ function todayDate() {
     return `${yyyy}-${mm}-${dd}`;
 }
 
+/** Keep Linkedin Contact as a plain URL string (never "[object Object]"). */
+function asUrlString(value) {
+    if (value === null || value === undefined) return "";
+    if (typeof value === "string") {
+        const s = value.trim();
+        return s === "[object Object]" ? "" : s;
+    }
+    if (typeof value === "object") {
+        const link = value.hyperlink != null ? String(value.hyperlink).trim() : "";
+        const text = value.text != null ? String(value.text).trim() : "";
+        if (/linkedin\.com/i.test(link)) return link;
+        if (/linkedin\.com/i.test(text)) return text;
+        return link || text || "";
+    }
+    const s = String(value).trim();
+    return s === "[object Object]" ? "" : s;
+}
+
 /**
  * @param {object} record — scrapeProfile() result
  * @param {string} [inputUrl] — originalQuery/query (raw input URL)
  */
 function mapToRow(record, inputUrl) {
+    const contact = asUrlString(inputUrl) || asUrlString(record.profileUrl);
     const resolved =
-        record.resolvedProfileUrl ||
-        record.profileUrl ||
-        inputUrl ||
-        "";
+        asUrlString(record.resolvedProfileUrl) ||
+        asUrlString(record.profileUrl) ||
+        contact;
 
     return {
-        "Linkedin Contact": inputUrl || record.profileUrl || "",
+        "Linkedin Contact": contact,
         "Linkedin Public Profile URL": resolved,
         "Linkedin Company": record.companyLinkedinUrl || "",
         "LEFT_THE_COMPANY": "",
@@ -135,8 +153,9 @@ function mapToRow(record, inputUrl) {
 function blankMappedRow(url) {
     const blank = {};
     for (const col of OUTPUT_COLUMNS) blank[col] = "";
-    blank["Linkedin Contact"] = url || "";
-    blank["Linkedin Public Profile URL"] = url || "";
+    const contact = asUrlString(url);
+    blank["Linkedin Contact"] = contact;
+    blank["Linkedin Public Profile URL"] = contact;
     blank["Date"] = todayDate();
     blank["open_to_work"] = "false";
     blank["remark"] = "OK";

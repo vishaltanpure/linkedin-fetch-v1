@@ -65,9 +65,14 @@ function stripEmbeddedTitleFromName(fullName) {
     return text;
 }
 
-function splitPersonName(fullName) {
+function splitPersonName(fullName, publicId) {
     const parts = stripEmbeddedTitleFromName(fullName)
         .replace(/,/g, " ")
+        // "Engg.Abdulmajeed" / "Dr.Hitesh" (period, no space) → insert space
+        .replace(
+            /^(engg|engr|engineer|eng|dr|doctor|mr|mrs|ms|miss|mx|prof|professor|sir|dame|hon|rev|adv|ir|arch)\.(?=[A-Za-z])/i,
+            "$1. "
+        )
         // leftover "Name - Credential" → whitespace (defense in depth)
         .replace(/\s+[-–—]\s+/g, " ")
         .split(/\s+/)
@@ -88,9 +93,34 @@ function splitPersonName(fullName) {
         return !MIDDLE_INITIAL_RE.test(part);
     });
 
-    const firstName = core.shift() || "";
+    let firstName = core.shift() || "";
     if (!core.length) {
         return { firstName, lastName: "" };
+    }
+
+    // ALL-CAPS surname (e.g. "Chi Chung HAU") → given name may be multi-token
+    const tail = core[core.length - 1];
+    if (/^[A-Z]{2,8}$/.test(tail) && core.length >= 1) {
+        return {
+            firstName: [firstName, ...core.slice(0, -1)].filter(Boolean).join(" "),
+            lastName: tail
+        };
+    }
+
+    // Compound surname from vanity slug ("lindsay-avent-jay" → lastName "Avent Jay")
+    const slug = String(publicId || "")
+        .toLowerCase()
+        .split(/[^a-z0-9]+/)
+        .filter(Boolean);
+    if (core.length >= 2 && slug.length) {
+        const last = core[core.length - 1];
+        const prev = core[core.length - 2];
+        const a = prev.toLowerCase().replace(/[^a-z0-9]/g, "");
+        const b = last.toLowerCase().replace(/[^a-z0-9]/g, "");
+        const slugJoined = slug.join("-");
+        if (a && b && (slugJoined.includes(`${a}-${b}`) || slugJoined.includes(`${b}-${a}`))) {
+            return { firstName, lastName: `${prev} ${last}` };
+        }
     }
 
     // Keep surname particles with the final token (St. John, Van Der Berg)
@@ -384,7 +414,7 @@ async function getProfile(page) {
     for (const loc of nameLocators) {
         const text = await loc.textContent().catch(() => "");
         const cleaned = (text || "").replace(/\s+/g, " ").trim();
-        if (cleaned && !/^(activity|experience|education|skills)$/i.test(cleaned)) {
+        if (cleaned && !/^(activity|experience|education|skills|about|interests|explore|ad options|don[’']t want)/i.test(cleaned)) {
             fullName = cleaned;
             break;
         }
@@ -392,15 +422,25 @@ async function getProfile(page) {
     if (!fullName) {
         throw new Error("Could not read profile name from top card");
     }
+    if (/this page doesn[’']t exist|page not found/i.test(fullName)) {
+        throw new Error("Profile not found (LinkedIn 404 page)");
+    }
 
-    const { firstName, lastName } = splitPersonName(fullName);
+    let publicId = null;
+    try {
+        publicId = getPublicId(page.url());
+    } catch {
+        publicId = null;
+    }
+
+    const { firstName, lastName } = splitPersonName(fullName, publicId);
 
     await page.evaluate(() => window.scrollBy(0, 900)).catch(() => {});
     await page
         .locator("main h2")
         .filter({ hasText: /^Activity$/i })
         .first()
-        .waitFor({ timeout: 3000 })
+        .waitFor({ timeout: 1200 })
         .catch(() => {});
     await page.evaluate(() => window.scrollTo(0, 0)).catch(() => {});
 
@@ -427,19 +467,13 @@ async function getProfile(page) {
     }
 
     const about = await page
+        .locator("main section")
+        .filter({ has: page.locator("h2", { hasText: /^About$/i }) })
         .locator('[data-testid="expandable-text-box"]')
         .first()
         .textContent()
         .then(t => (t || "").replace(/\s+/g, " ").trim())
         .catch(() => "");
-
-    const publicId = (() => {
-        try {
-            return getPublicId(page.url());
-        } catch {
-            return null;
-        }
-    })();
 
     const openToWork = publicId
         ? await page.evaluate(ownPublicId => {

@@ -100,7 +100,7 @@ async function scrapeProfile(page, profileUrl) {
     await page
         .locator('a[href*="overlay/contact-info"]')
         .first()
-        .waitFor({ timeout: 8000 })
+        .waitFor({ timeout: 5500 })
         .catch(() => {});
 
     if (/\/(login|authwall|checkpoint)/.test(page.url())) {
@@ -126,7 +126,7 @@ async function scrapeProfile(page, profileUrl) {
     if (looksLikeEncodedProfileId(page.url())) {
         const beforeRedirect = page.url();
         await page
-            .waitForURL(url => url.href !== beforeRedirect, { timeout: 5000 })
+            .waitForURL(url => url.href !== beforeRedirect, { timeout: 3500 })
             .catch(() => {});
     }
 

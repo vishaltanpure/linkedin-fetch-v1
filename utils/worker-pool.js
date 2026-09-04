@@ -23,6 +23,24 @@ const CONFIG = require("../config/concurrency");
 
 const URL_COLUMN = "originalQuery/query";
 
+/** Excel hyperlink cells may still arrive as objects if read elsewhere. */
+function coerceUrl(value) {
+    if (value === null || value === undefined) return "";
+    if (typeof value === "string") {
+        const s = value.trim();
+        return s === "[object Object]" ? "" : s;
+    }
+    if (typeof value === "object") {
+        const link = value.hyperlink != null ? String(value.hyperlink).trim() : "";
+        const text = value.text != null ? String(value.text).trim() : "";
+        if (/linkedin\.com/i.test(link)) return link;
+        if (/linkedin\.com/i.test(text)) return text;
+        return link || text || "";
+    }
+    const s = String(value).trim();
+    return s === "[object Object]" ? "" : s;
+}
+
 function isSessionError(err) {
     return /login|authwall|checkpoint|session expired/i.test(err.message || "");
 }
@@ -130,7 +148,7 @@ async function processTable(context, table, session, concurrency = CONFIG.MAX_CO
                 if (i >= rows.length) break;
 
                 const inputRow = rows[i];
-                const url = (inputRow[URL_COLUMN] || "").trim();
+                const url = coerceUrl(inputRow[URL_COLUMN]);
 
                 if (!url) {
                     results[i] = blankRowFor(inputRow, url);
@@ -142,7 +160,7 @@ async function processTable(context, table, session, concurrency = CONFIG.MAX_CO
                 try {
                     const record = await scrapeWithRetry(page, url, workerLabel);
                     // Output row = mapped template only.
-                    // Linkedin Contact ← input URL (originalQuery/query)
+                    // Linkedin Contact ← input URL (originalQuery/query) as-is
                     // Linkedin Public Profile URL ← resolved URL from scrape
                     results[i] = mapToRow(record, url);
                     stats.succeeded++;
@@ -175,8 +193,9 @@ async function processTable(context, table, session, concurrency = CONFIG.MAX_CO
                     }
                 }
 
+                // Between jobs: medium pacing (was Delay.long ~3.5–6s).
                 if (!session.expired && nextIndex < rows.length) {
-                    await Delay.long(page);
+                    await Delay.medium(page);
                 }
             }
         } finally {
@@ -196,7 +215,7 @@ async function processTable(context, table, session, concurrency = CONFIG.MAX_CO
     for (let i = 0; i < rows.length; i++) {
         if (!results[i]) {
             const inputRow = rows[i];
-            const url = (inputRow[URL_COLUMN] || "").trim();
+            const url = coerceUrl(inputRow[URL_COLUMN]);
             results[i] = blankRowFor(inputRow, url);
         }
     }

@@ -44,7 +44,7 @@ test("strips titles, commas, degrees, middle initials", () => {
         lastName: "Kirn"
     });
     assert.deepStrictEqual(splitPersonName("Chi Chung HAU"), {
-        firstName: "Chi",
+        firstName: "Chi Chung",
         lastName: "HAU"
     });
     assert.deepStrictEqual(splitPersonName("Mark Kirn - FMP"), {
@@ -71,6 +71,18 @@ test("strips titles, commas, degrees, middle initials", () => {
         firstName: "Abdulmajeed",
         lastName: "Al-Shehri"
     });
+    assert.deepStrictEqual(splitPersonName("Engg. Abdulmajeed Alshehri"), {
+        firstName: "Abdulmajeed",
+        lastName: "Alshehri"
+    });
+    assert.deepStrictEqual(splitPersonName("Engg.Abdulmajeed Alshehri"), {
+        firstName: "Abdulmajeed",
+        lastName: "Alshehri"
+    });
+    assert.deepStrictEqual(
+        splitPersonName("Lindsay Avent Jay", "lindsay-avent-jay-a6410a74"),
+        { firstName: "Lindsay", lastName: "Avent Jay" }
+    );
 });
 
 test("keeps compound surnames, drops middle names", () => {
@@ -187,6 +199,23 @@ test("structural first usable line wins for short/custom headlines", () => {
             "University of Mississippi Medical Center · Mississippi State University",
             "Brandon, Mississippi, United States"
         ]),
+        "Director Clinical Operations, UMMC Department of Psychiatry and Human Behavior"
+    );
+});
+
+test("rejects company · education as headline", () => {
+    assert.strictEqual(
+        validateHeadline(
+            "University of Mississippi Medical Center · Mississippi State University",
+            "test"
+        ),
+        ""
+    );
+    assert.strictEqual(
+        validateHeadline(
+            "Director Clinical Operations, UMMC Department of Psychiatry and Human Behavior",
+            "test"
+        ),
         "Director Clinical Operations, UMMC Department of Psychiatry and Human Behavior"
     );
 });
