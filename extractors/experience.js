@@ -87,7 +87,13 @@ function collectEntitiesInPage() {
             };
         });
 
-        return { logoCompany, primaryHref, headerLines, subRoles };
+        // Full entity <p> order — needed when the org link only wraps the
+        // company name and the role title sits as a sibling (company-first
+        // layout). headerLines alone would then be [Company, …] and swap
+        // DESIGNATION/COMPANY.
+        const entityLines = pTexts(entity);
+
+        return { logoCompany, primaryHref, headerLines, entityLines, subRoles };
     });
 }
 
@@ -136,6 +142,35 @@ function extractEmploymentType(text) {
         }
     }
     return "";
+}
+
+/** "10 yrs 7 mos" / "1 yr 2 mos" — group total tenure, never a company. */
+function isDurationOnlyLine(s) {
+    const t = String(s || "").trim();
+    return /^\d+\s*(yr|yrs|year|years)(\s+\d+\s*(mo|mos|month|months))?$/i.test(t) ||
+        /^\d+\s*(mo|mos|month|months)$/i.test(t);
+}
+
+/**
+ * Job-title cues — used to detect company-first single-role layouts where
+ * line[0] is the org (matches logo) and line[1] is the real designation
+ * (e.g. Cranfield University / Lecturer…).
+ */
+const TITLE_HINT =
+    /\b(lecturer|professor|trustee|director|manager|officer|engineer|analyst|specialist|consultant|president|executive|founder|chairman|chairwoman|chair|fellow|tutor|head|lead|chief|coordinator|scientist|researcher|architect|developer|designer|nurse|teacher|intern|associate|advisor|adviser|partner|principal|owner|ceo|cfo|cto|coo|vp|svp|evp|founder|operator|supervisor|technician|accountant|auditor|banker|trader|physician|lawyer|attorney|economist)\b/i;
+
+function looksLikeJobTitle(line) {
+    const t = String(line || "").trim();
+    if (!t) return false;
+    if (isDateLine(t) || isEmploymentMetaLine(t) || isSkillsLine(t) || isDurationOnlyLine(t)) {
+        return false;
+    }
+    if (isLocationLine(t)) return false;
+    // "Acme Corp · Full-time" is a company line, not a title
+    if (t.includes("·") && extractEmploymentType(t)) return false;
+    if (TITLE_HINT.test(t)) return true;
+    if (/\sat\s.+/i.test(t) && t.length < 180) return true;
+    return false;
 }
 
 function isLocationLine(s) {
@@ -208,6 +243,7 @@ function classifyRole(title, lines, seedCompany, href, logoCompany, seedEmployme
 
         // "Skills: Presentation Skills" — never a date/location/company.
         if (isSkillsLine(line)) continue;
+        if (isDurationOnlyLine(line)) continue;
 
         // "Company · Full-time" (single-role layout)
         if (!company && line.includes("·") && !isDateLine(line) && !isEmploymentMetaLine(line)) {
@@ -283,12 +319,61 @@ function classifyRole(title, lines, seedCompany, href, logoCompany, seedEmployme
     };
 }
 
+/**
+ * Pick title vs descriptor lines for a single-role entity.
+ * Handles company-first DOM (org name before designation) which otherwise
+ * swaps DESIGNATION and COMPANY.
+ */
+function resolveSingleRoleLines(headerLines, entityLines, logoCompany) {
+    const norm = s => (s || "").trim().toLowerCase();
+    // Prefer the longer ordered line list when the org link only wraps
+    // the company name and the title lives as a sibling <p>.
+    let lines = headerLines || [];
+    if (Array.isArray(entityLines) && entityLines.length > lines.length) {
+        lines = entityLines;
+    }
+    lines = lines.filter(Boolean);
+    if (!lines.length) {
+        return { title: "", rest: [], seedCompany: "" };
+    }
+
+    let title = lines[0];
+    let rest = lines.slice(1);
+    let seedCompany = "";
+
+    // Company-first: first line is the org (matches logo / not a title),
+    // a later line is the real job title.
+    if (logoCompany && norm(title) === norm(logoCompany) && !looksLikeJobTitle(title)) {
+        const titleIdx = rest.findIndex(looksLikeJobTitle);
+        if (titleIdx >= 0) {
+            seedCompany = title;
+            title = rest[titleIdx];
+            rest = rest.filter((_, i) => i !== titleIdx);
+            return { title, rest, seedCompany };
+        }
+    }
+
+    // Same swap without relying on logo text: first line not title-like,
+    // second line is (e.g. "CO Research Trust" / "Trustee" / dates).
+    if (
+        !looksLikeJobTitle(title) &&
+        looksLikeJobTitle(rest[0]) &&
+        !isDateLine(rest[0])
+    ) {
+        seedCompany = title;
+        title = rest[0];
+        rest = rest.slice(1);
+    }
+
+    return { title, rest, seedCompany };
+}
+
 function entityToRoles(entity) {
 
-    const { logoCompany, primaryHref, headerLines, subRoles } = entity;
+    const { logoCompany, primaryHref, headerLines, entityLines, subRoles } = entity;
 
     // Grouped if any nested <li> actually looks like a role (has a date line).
-    const realSubRoles = subRoles.filter(sr =>
+    const realSubRoles = (subRoles || []).filter(sr =>
         sr.lines.some(isDateLine)
     );
 
@@ -310,10 +395,14 @@ function entityToRoles(entity) {
         });
     }
 
-    // Single-role entity.
-    const [title, ...rest] = headerLines;
+    // Single-role entity (may be company-first — see resolveSingleRoleLines).
+    const { title, rest, seedCompany } = resolveSingleRoleLines(
+        headerLines,
+        entityLines,
+        logoCompany
+    );
     return [
-        classifyRole(title, rest, "", primaryHref, logoCompany, "")
+        classifyRole(title, rest, seedCompany, primaryHref, logoCompany, "")
     ];
 }
 
@@ -372,6 +461,9 @@ module.exports = {
         entityToRoles,
         isDateLine,
         extractEmploymentType,
-        isSkillsLine
+        isSkillsLine,
+        looksLikeJobTitle,
+        resolveSingleRoleLines,
+        isDurationOnlyLine
     }
 };

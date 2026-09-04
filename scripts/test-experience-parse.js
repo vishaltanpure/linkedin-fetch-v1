@@ -86,6 +86,62 @@ test("Mark-style grouped role with per-role Full-time", () => {
     assert.strictEqual(roles[0].duration, "5 mos");
 });
 
+test("Roland-style company-first single role does not swap title/company", () => {
+    const roles = entityToRoles({
+        logoCompany: "Cranfield University",
+        primaryHref: "https://www.linkedin.com/school/cranfield-university/",
+        headerLines: ["Cranfield University"],
+        entityLines: [
+            "Cranfield University",
+            "Lecturer in Forensic Archaeology & Anthropology",
+            "Apr 2015 - Present · 10 yrs 7 mos",
+            "Shrivenham, UK"
+        ],
+        subRoles: []
+    });
+    assert.strictEqual(roles.length, 1);
+    assert.strictEqual(roles[0].title, "Lecturer in Forensic Archaeology & Anthropology");
+    assert.strictEqual(roles[0].company, "Cranfield University");
+    assert.strictEqual(roles[0].startDate, "Apr 2015");
+    assert.strictEqual(roles[0].endDate, "Present");
+});
+
+test("Trustee company-first (logo matches first line) swaps back", () => {
+    const roles = entityToRoles({
+        logoCompany: "CO Research Trust",
+        primaryHref: "https://www.linkedin.com/company/the-co-research-trust/",
+        headerLines: [
+            "CO Research Trust",
+            "Trustee",
+            "Dec 2024 - Present · 1 yr 8 mos"
+        ],
+        entityLines: [
+            "CO Research Trust",
+            "Trustee",
+            "Dec 2024 - Present · 1 yr 8 mos"
+        ],
+        subRoles: []
+    });
+    assert.strictEqual(roles[0].title, "Trustee");
+    assert.strictEqual(roles[0].company, "CO Research Trust");
+});
+
+test("normal title-first single role unchanged", () => {
+    const roles = entityToRoles({
+        logoCompany: "Acme Corp",
+        primaryHref: "https://www.linkedin.com/company/acme/",
+        headerLines: [
+            "Senior Engineer",
+            "Acme Corp · Full-time",
+            "Jan 2020 - Present · 6 yrs"
+        ],
+        subRoles: []
+    });
+    assert.strictEqual(roles[0].title, "Senior Engineer");
+    assert.strictEqual(roles[0].company, "Acme Corp");
+    assert.strictEqual(roles[0].employmentType, "Full-time");
+});
+
 test("LOCATION maps full place string", () => {
     const row = mapToRow({
         location: "Bridgewater, New Jersey, United States"

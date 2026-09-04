@@ -7,6 +7,7 @@
  */
 
 const log = require("./logger");
+const { PRONOUN_BADGE } = require("./pronouns");
 
 // "870,998 followers" / "316 connections" / "500+ connections"
 const COUNT_LIKE = /^[\d,]+\+?\s*(followers?|connections?)$/i;
@@ -20,13 +21,6 @@ const CONNECTIONS_SHAPE = COUNT_SHAPE; // alias kept for older call sites
 // <p> when picking the headline candidate) — this is a defense-in-depth
 // backstop in case that anchoring ever slips on a future layout change.
 const DEGREE_BADGE = /^(·\s*)?\d+(st|nd|rd|th)\+?$/i;
-
-// "He/Him", "She/Her", "They/Them" — closed pronoun vocabulary, same
-// pattern used at extraction time. Never a headline.
-const PRONOUN_WORDS = "he|him|his|she|her|hers|they|them|their|theirs|ze|zir|zirs|xe|xem|xyr";
-const PRONOUN_BADGE = new RegExp(
-    `^(${PRONOUN_WORDS})\\s*/\\s*(${PRONOUN_WORDS})(\\s*/\\s*(${PRONOUN_WORDS}))?$`, "i"
-);
 
 const normalize = s => (s || "").trim().toLowerCase();
 

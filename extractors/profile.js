@@ -1,6 +1,7 @@
 const SELECTORS = require("../config/selectors");
 const { validateHeadline, validateLocation, validateFollowers } = require("../utils/validators");
 const { getPublicId } = require("../utils/linkedin-url");
+const { PRONOUN_WORDS, isPronounBadge } = require("../utils/pronouns");
 const log = require("../utils/logger");
 
 /**
@@ -137,15 +138,15 @@ function splitPersonName(fullName, publicId) {
     };
 }
 
-function extractTopCardInPage(fullName) {
+function extractTopCardInPage({ fullName, pronounWords }) {
 
     const clean = s => (s || "").replace(/\s+/g, " ").trim();
     const normalize = s => clean(s).toLowerCase();
 
     const DEGREE_BADGE_PATTERN = /^(·\s*)?\d+(st|nd|rd|th)\+?$/i;
-    const PRONOUN_WORDS = "he|him|his|she|her|hers|they|them|their|theirs|ze|zir|zirs|xe|xem|xyr";
     const PRONOUN_BADGE_PATTERN = new RegExp(
-        `^(${PRONOUN_WORDS})\\s*/\\s*(${PRONOUN_WORDS})(\\s*/\\s*(${PRONOUN_WORDS}))?$`, "i"
+        `^(${pronounWords})\\s*/\\s*(${pronounWords})(\\s*/\\s*(${pronounWords}))?$`,
+        "i"
     );
 
     // LinkedIn UI chrome / truncated nested-span garbage (e.g. "This is a mo")
@@ -444,7 +445,10 @@ async function getProfile(page) {
         .catch(() => {});
     await page.evaluate(() => window.scrollTo(0, 0)).catch(() => {});
 
-    const topCard = await page.evaluate(extractTopCardInPage, fullName);
+    const topCard = await page.evaluate(extractTopCardInPage, {
+        fullName,
+        pronounWords: PRONOUN_WORDS
+    });
 
     const location = validateLocation(topCard.location, fullName);
     const followers = validateFollowers(topCard.followers, fullName);
@@ -515,7 +519,9 @@ function pickHeadlineFromCandidates(candidates) {
     const HEADLINE_MAX = 220;
     const PROFESSION_OR_TITLE =
         /\b(officer|manager|director|engineer|architect|founder|consultant|analyst|specialist|executive|president|economist|scientist|researcher|professor|lecturer|physician|lawyer|attorney|accountant|auditor|banker|trader|designer|developer|nurse|teacher|quant|quantitative|ceo|cfo|cto|coo|vp|svp|evp|leader|head|lead|chief|partner|principal|owner|fractional|intern|associate|coordinator|advisor|adviser|investor|entrepreneur)\b/i;
-    const isBadge = text => /^(·\s*)?\d+(st|nd|rd|th)\+?$/i.test(text);
+    const isBadge = text =>
+        /^(·\s*)?\d+(st|nd|rd|th)\+?$/i.test(text) ||
+        isPronounBadge(text);
     const isCountLike = text =>
         /^[\d,]+\+?\s*(followers?|connections?)$/i.test(text) ||
         /^(followers?|connections?)$/i.test(text);

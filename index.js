@@ -42,7 +42,7 @@ const { getCompanyAbout } = require("./extractors/company");
 const { getActivity } = require("./extractors/activity");
 const { scanForKeywords } = require("./extractors/disease-keywords");
 const { getAppRoot } = require("./utils/app-root");
-const { isValidLinkedInProfileUrl, looksLikeEncodedProfileId } = require("./utils/linkedin-url");
+const { isValidLinkedInProfileUrl, looksLikeEncodedProfileId, toCompanyAboutUrl, toCompanyLinkedinUrl } = require("./utils/linkedin-url");
 const { profileNavGate } = require("./utils/nav-gate");
 
 /** Prefer www + https so we avoid an extra redirect before ACw→vanity. */
@@ -74,6 +74,65 @@ function inferRoleCompanyFromHeadline(headline) {
     }
 
     return { currentPosition: "", currentCompany: "" };
+}
+
+/**
+ * When several roles are "Present", LinkedIn lists order is not always the
+ * primary job (e.g. Trustee above Lecturer). Prefer a current role that
+ * matches the top-card headline ("Title at Company").
+ */
+function pickPrimaryExperience(experience, headline) {
+    const roles = experience.experiences || [];
+    const currentRoles = roles.filter(r => r && r.isCurrent);
+    const fallback = {
+        currentPosition: experience.currentPosition || "",
+        currentCompany: experience.currentCompany || "",
+        duration: experience.duration || "",
+        startDate: experience.startDate || "",
+        endDate: experience.endDate || "",
+        employmentType: experience.employmentType || "",
+        location: experience.location || "",
+        companyLinkedinUrl: experience.companyLinkedinUrl || "",
+        companyAboutUrl: experience.companyAboutUrl || ""
+    };
+
+    if (currentRoles.length <= 1 || !headline) return fallback;
+
+    const inferred = inferRoleCompanyFromHeadline(headline);
+    const norm = s => String(s || "").trim().toLowerCase();
+    const h = norm(headline);
+
+    const matched =
+        currentRoles.find(r => {
+            const title = norm(r.title);
+            const company = norm(r.company);
+            if (inferred.currentPosition && title && title.includes(norm(inferred.currentPosition).slice(0, 24))) {
+                return true;
+            }
+            if (inferred.currentCompany && company && (
+                company === norm(inferred.currentCompany) ||
+                company.includes(norm(inferred.currentCompany)) ||
+                norm(inferred.currentCompany).includes(company)
+            )) {
+                return true;
+            }
+            return Boolean(title && h.includes(title.slice(0, Math.min(28, title.length))));
+        }) || null;
+
+    if (!matched) return fallback;
+
+    const rawOrgUrl = matched.companyUrl || "";
+    return {
+        currentPosition: matched.title || "",
+        currentCompany: matched.company || "",
+        duration: matched.duration || "",
+        startDate: matched.startDate || "",
+        endDate: matched.endDate || "",
+        employmentType: matched.employmentType || "",
+        location: matched.location || "",
+        companyLinkedinUrl: toCompanyLinkedinUrl(rawOrgUrl) || toCompanyAboutUrl(rawOrgUrl).replace(/\/about\/?$/, "/") || experience.companyLinkedinUrl || "",
+        companyAboutUrl: toCompanyAboutUrl(rawOrgUrl) || experience.companyAboutUrl || ""
+    };
 }
 
 async function scrapeProfile(page, profileUrl) {
@@ -151,7 +210,11 @@ async function scrapeProfile(page, profileUrl) {
     log.success("Profile extracted");
 
     // ---- 2. Experience (dedicated details route) ----
-    const experience = await retry(() => getExperience(page, resolvedProfileUrl));
+    let experience = await retry(() => getExperience(page, resolvedProfileUrl));
+    // Multiple "Present" roles: prefer the one matching the top-card headline
+    // (e.g. Lecturer @ Cranfield over a more recent Trustee listing).
+    const primary = pickPrimaryExperience(experience, profile.headline);
+    experience = { ...experience, ...primary };
     log.success(`Experience extracted (${experience.experiences.length} roles)`);
 
     // ---- 3. Company About (works for /company/…/about/ and /school/…/about/) ----

@@ -100,6 +100,26 @@ test("keeps compound surnames, drops middle names", () => {
     });
 });
 
+test("rejects pronoun badges as headline (EN + DE)", () => {
+    assert.strictEqual(validateHeadline("she/her", "test"), "");
+    assert.strictEqual(validateHeadline("He/Him", "test"), "");
+    assert.strictEqual(validateHeadline("sie/ihr", "test"), "");
+    assert.strictEqual(validateHeadline("Sie/Ihr", "test"), "");
+    assert.strictEqual(validateHeadline("er/ihm", "test"), "");
+    assert.ok(
+        validateHeadline("Product Manager | SaaS", "test").includes("Product Manager")
+    );
+    assert.strictEqual(
+        pickHeadlineFromCandidates([
+            "sie/ihr",
+            "Healthcare Professional",
+            "Company · School",
+            "Berlin, Germany"
+        ]),
+        "Healthcare Professional"
+    );
+});
+
 test("rejects UI fragment headlines", () => {
     assert.strictEqual(validateHeadline("This is a mo", "test"), "");
     assert.ok(
