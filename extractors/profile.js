@@ -16,10 +16,52 @@ const log = require("../utils/logger");
  */
 
 /** Leading honorifics that must not become firstName (e.g. "Dr. Hitesh Bhatt", "Eng. Abdulmajeed"). */
-const LEADING_TITLE_RE = /^(dr|doctor|mr|mrs|ms|miss|mx|prof|professor|sir|dame|hon|rev|adv|er|ca|eng|engg|engr|engineer|ir|arch|ar)\.?$/i;
+const LEADING_TITLE_RE = /^(dr|doctor|mr|mrs|ms|miss|mx|prof|professor|sir|dame|hon|rev|adv|er|ca|eng|engg|engr|engineer|ing|dipl|ir|arch|ar)\.?$/i;
+
+/**
+ * Academic/honorific particles that only ever appear as part of a compound
+ * title — "Dr.-Ing.", "Dr. rer. nat.", "Dipl.-Ing.", "Prof. Dr. med.".
+ * Never used on their own to strip a token; see isLeadingTitleToken().
+ */
+const TITLE_PARTICLE_RE = /^(ing|dipl|mag|med|rer|nat|habil|hc|univ|techn)\.?$/i;
 
 /** Trailing degrees / certifications / generational suffixes — never lastName. */
 const TRAILING_SUFFIX_RE = /^(jr|sr|ii|iii|iv|v|phd|ph\.d|md|m\.d|mba|m\.b\.a|msa|m\.s\.a|mph|m\.p\.h|mpa|msc|m\.sc|ms|m\.s|llm|llb|bba|btech|b\.tech|mtech|m\.tech|miet|cfa|cpa|ca|esq|cissp|fmp|cfm|pmp|csm|cissp|pe|ra|aia|leed|leed\s*ap|cma|cia|cfe|frm|prm|shrm|phr|sphr|gphr|rn|np|do|dds|dmd|od|pharmd|jd|esq|ceng|cpeng|cping|peng|beng)\.?$/i;
+
+/**
+ * Professional post-nominals that arrive as ALL-CAPS acronyms.
+ *
+ * Stored punctuation-free and UPPER-CASE. A token only matches when it is
+ * written in caps ("ARRT") or carries periods ("M.M.", "M.Eng") — a normal
+ * mixed-case surname can never match, and an unknown caps token is still
+ * treated as a surname, so genuinely capitalised names (HAU, LEE, KIM) are
+ * unaffected. Deliberately excludes two-letter forms that are common
+ * surnames in their own right (MA, BA, DO, HO, NG, LI).
+ */
+const CREDENTIAL_ACRONYMS = new Set([
+    // Degrees
+    "MBA", "MSA", "MPH", "MPA", "MSC", "MS", "MM", "MED", "MENG", "MFA", "MPP",
+    "MSN", "MSW", "MPS", "BSC", "BENG", "BBA", "BTECH", "MTECH", "BS", "BSN",
+    "PHD", "EDD", "JD", "LLM", "LLB", "MD", "DDS", "DMD", "DVM", "OD", "PHARMD",
+    "DNP", "DBA", "PSYD", "DPT", "DSC",
+    // Accounting / finance
+    "CPA", "CFA", "CFP", "CMA", "CIA", "CFE", "CTP", "CTFA", "CLU", "CHFC",
+    "ACA", "ACCA", "CIMA", "FCA", "CFM", "FMP", "FRM", "PRM", "CAIA", "CGMA",
+    // Project / process / IT
+    "PMP", "CSM", "PSM", "CSPO", "ACP", "CBAP", "CCBA", "ITIL", "TOGAF",
+    "CISA", "CISM", "CISSP", "CCNA", "CCNP", "CCIE", "CEH", "GCPM", "GMP",
+    "LSSBB", "LSSGB", "SSBB", "SSGB", "CPIM", "CSCP", "CPSM", "CPM", "CIM",
+    // HR
+    "SPHR", "PHR", "GPHR", "SHRM", "SHRMCP", "SHRMSCP", "CHRM", "HRM", "CDS",
+    // Marketing
+    "PCM", "CDMP", "CIPP", "CIPM",
+    // Architecture / engineering / safety
+    "AIA", "AIC", "NCARB", "LEED", "PE", "RA", "CEM", "CENG", "CSP", "CIH",
+    "CHST", "OHST", "COHS", "CP", "CPP", "AZCP",
+    // Clinical
+    "RN", "LPN", "NP", "PA", "APRN", "CRNA", "ARRT", "RT", "RRT", "CPHQ",
+    "CHFP", "FACHE", "FACS", "FAAP", "CCRN", "CNOR"
+]);
 
 /** Job-title words — used when LinkedIn stuffs the headline into the name via " - ". */
 const EMBEDDED_TITLE_RE =
@@ -31,6 +73,28 @@ const MIDDLE_INITIAL_RE = /^[A-Za-z]\.?$/;
 /** Surname particles kept with the last name (St. John, Van Der Berg, De Luca). */
 const SURNAME_PARTICLE_RE = /^(st|st\.|ste|ste\.|van|von|der|den|de|del|della|da|di|la|le|du|des|mc|mac|o'|al|el)$/i;
 
+/** A bare initial: "J", "J.". */
+function isBareInitial(token) {
+    return MIDDLE_INITIAL_RE.test(String(token || "").trim());
+}
+
+/** Lower-case alphanumeric form used to compare a name token against a vanity slug. */
+function slugKey(text) {
+    return String(text || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+}
+
+/**
+ * True when the vanity slug corroborates that `token` is part of the person's
+ * real name. Works for both hyphenated ("chandana-basaveni") and glued
+ * ("chandanabasaveni") slugs. Short tokens are ignored — two characters match
+ * far too easily to be evidence of anything.
+ */
+function slugConfirms(publicId, token) {
+    const slug = slugKey(publicId);
+    const key = slugKey(token);
+    return key.length >= 3 && slug.includes(key);
+}
+
 /**
  * "Dr. Hitesh R. Bhatt, MBA" → firstName=Hitesh, lastName=Bhatt
  * "Mark Kirn FMP"            → firstName=Mark, lastName=Kirn
@@ -38,13 +102,60 @@ const SURNAME_PARTICLE_RE = /^(st|st\.|ste|ste\.|van|von|der|den|de|del|della|da
  * "Anita Singh Rai"          → firstName=Anita, lastName=Rai
  */
 function looksLikeCredential(token) {
-    const raw = String(token || "").replace(/^,+|,+$/g, "");
+    const raw = String(token || "").replace(/^[,\s]+|[,\s]+$/g, "");
     if (!raw) return false;
     if (TRAILING_SUFFIX_RE.test(raw)) return true;
-    // Do NOT treat arbitrary ALL-CAPS tokens as credentials — surnames are
-    // often shown in caps (HAU, LEE, KIM). Only known short cert codes.
-    const letters = raw.replace(/\./g, "");
-    return /^(FMP|CFM|PMP|CSM|CFA|CPA|CISSP|FRM|PRM|SHRM|PHR|SPHR|GPHR|LEED|AIA|CMA|CIA|CFE)$/i.test(letters);
+
+    // Caps ("ARRT") or dotted ("M.M.", "M.Eng") only. A plain mixed-case word
+    // is a name, never a credential — that is what keeps surnames safe.
+    const isCapsOrDotted = raw === raw.toUpperCase() || raw.includes(".");
+    if (isCapsOrDotted && CREDENTIAL_ACRONYMS.has(raw.replace(/[.\s]/g, "").toUpperCase())) {
+        return true;
+    }
+
+    // Hyphenated credential + qualifier: "MBA-Actg", "SHRM-CP", "LEED-AP".
+    const head = raw.split(/[-–—]/)[0];
+    if (head && head !== raw) {
+        const headKey = head.replace(/[.\s]/g, "").toUpperCase();
+        const headIsCapsOrDotted = head === head.toUpperCase() || head.includes(".");
+        if (headIsCapsOrDotted &&
+            (CREDENTIAL_ACRONYMS.has(headKey) || TRAILING_SUFFIX_RE.test(head))) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+/** Leftover tokens that carry no name information: "09", ".", "-". */
+function isJunkToken(token) {
+    const raw = String(token || "").trim();
+    if (!raw) return true;
+    if (/^\d+$/.test(raw)) return true;
+    return !/[\p{L}]/u.test(raw);
+}
+
+/**
+ * True for a whole token that is nothing but honorifics — "Dr.", "Dr.-Ing.",
+ * "Dipl.-Ing.". Every dot/hyphen-separated piece has to be a title, so
+ * "St." (particle) and "Al-Shehri" (surname) are never mistaken for one.
+ */
+function isLeadingTitleToken(token) {
+    const raw = String(token || "").trim();
+    if (!raw) return false;
+    if (LEADING_TITLE_RE.test(raw)) return true;
+    const pieces = raw.split(/[.\-–—]+/).filter(Boolean);
+    if (pieces.length < 2) return false;
+    let sawTitle = false;
+    for (const piece of pieces) {
+        if (LEADING_TITLE_RE.test(piece)) {
+            sawTitle = true;
+            continue;
+        }
+        if (TITLE_PARTICLE_RE.test(piece)) continue;
+        return false;
+    }
+    return sawTitle;
 }
 
 /**
@@ -66,9 +177,44 @@ function stripEmbeddedTitleFromName(fullName) {
     return text;
 }
 
+/**
+ * Drop comma-separated post-nominal groups.
+ *
+ * The comma in "Karen Parker, AIC" / "Becky Reed, CDMP, PCM" is the single
+ * most reliable signal LinkedIn gives about where the name stops and the
+ * letters after it begin — the previous implementation replaced every comma
+ * with a space as its FIRST step, destroying that signal and leaving the
+ * credential standing as the final token (i.e. as LAST_NAME).
+ *
+ * Only a trailing group that actually contains a credential is dropped, and
+ * only when it is short, so "Dr., Hitesh R. Bhatt, MBA" loses "MBA" alone and
+ * "Nguyen, Anh" (Last, First) is left intact.
+ */
+function stripPostNominalGroups(text) {
+    const segments = String(text || "").split(",").map(s => s.trim()).filter(Boolean);
+    if (segments.length <= 1) return segments[0] || "";
+
+    const kept = [segments[0]];
+    for (const segment of segments.slice(1)) {
+        const tokens = segment.split(/\s+/).filter(Boolean);
+        // "MBA" / "CDMP" / "Wharton GMP" — a short group carrying a credential
+        // is a post-nominal phrase, not part of the person's name.
+        if (tokens.some(looksLikeCredential) && tokens.length <= 3) continue;
+        kept.push(segment);
+    }
+    return kept.join(" ");
+}
+
 function splitPersonName(fullName, publicId) {
-    const parts = stripEmbeddedTitleFromName(fullName)
-        .replace(/,/g, " ")
+
+    const cleaned = stripPostNominalGroups(
+        stripEmbeddedTitleFromName(fullName)
+            // "Petr Kodl (inactive)" / "Daniel Palacios (Aerospace networker)"
+            .replace(/[(（\[][^)）\]]*[)）\]]/g, " ")
+            .replace(/[“”"][^“”"]*[“”"]/g, " ")
+    );
+
+    let parts = cleaned
         // "Engg.Abdulmajeed" / "Dr.Hitesh" (period, no space) → insert space
         .replace(
             /^(engg|engr|engineer|eng|dr|doctor|mr|mrs|ms|miss|mx|prof|professor|sir|dame|hon|rev|adv|ir|arch)\.(?=[A-Za-z])/i,
@@ -78,14 +224,34 @@ function splitPersonName(fullName, publicId) {
         .replace(/\s+[-–—]\s+/g, " ")
         .split(/\s+/)
         .map(part => part.replace(/^,+|,+$/g, "").replace(/^[-–—]+|[-–—]+$/g, ""))
-        .filter(Boolean);
+        .filter(Boolean)
+        // "Dr . Thomas Kupferschmidt" leaves a lone "."; "Peter Linden 09"
+        // leaves a bare number. Neither is ever part of a person's name, and
+        // an orphan "." previously survived to become FIRST_NAME.
+        .filter(part => !isJunkToken(part));
 
-    while (parts.length > 1 && LEADING_TITLE_RE.test(parts[0])) {
+    while (parts.length > 1 && isLeadingTitleToken(parts[0])) {
         parts.shift();
     }
 
     while (parts.length > 1 && looksLikeCredential(parts[parts.length - 1])) {
         parts.pop();
+    }
+
+    // "E. Brooke Moore" / "J. Timothy Gorman" — a US-style leading initial.
+    // The given name the person actually goes by is the NEXT token, and the
+    // vanity slug agrees (e-brooke-moore, j-timothy-gorman). Skipped when the
+    // following token is itself an initial or a surname particle, so
+    // "P. St. John" keeps "P." as the first name — there is no other given
+    // name there to promote.
+    if (
+        parts.length >= 3 &&
+        isBareInitial(parts[0]) &&
+        !isBareInitial(parts[1]) &&
+        !SURNAME_PARTICLE_RE.test(parts[1]) &&
+        !isLeadingTitleToken(parts[1])
+    ) {
+        parts = parts.slice(1);
     }
 
     // Drop bare middle initials between first and last ("John M. Smith" → John / Smith)
@@ -94,12 +260,14 @@ function splitPersonName(fullName, publicId) {
         return !MIDDLE_INITIAL_RE.test(part);
     });
 
-    let firstName = core.shift() || "";
+    const firstName = core.shift() || "";
     if (!core.length) {
         return { firstName, lastName: "" };
     }
 
-    // ALL-CAPS surname (e.g. "Chi Chung HAU") → given name may be multi-token
+    // ALL-CAPS surname (e.g. "Chi Chung HAU") → given name may be multi-token.
+    // Runs after credential stripping, so "Karen Parker AIC" has already lost
+    // its "AIC" and never reaches this branch.
     const tail = core[core.length - 1];
     if (/^[A-Z]{2,8}$/.test(tail) && core.length >= 1) {
         return {
@@ -108,21 +276,13 @@ function splitPersonName(fullName, publicId) {
         };
     }
 
-    // Compound surname from vanity slug ("lindsay-avent-jay" → lastName "Avent Jay")
-    const slug = String(publicId || "")
-        .toLowerCase()
-        .split(/[^a-z0-9]+/)
-        .filter(Boolean);
-    if (core.length >= 2 && slug.length) {
-        const last = core[core.length - 1];
-        const prev = core[core.length - 2];
-        const a = prev.toLowerCase().replace(/[^a-z0-9]/g, "");
-        const b = last.toLowerCase().replace(/[^a-z0-9]/g, "");
-        const slugJoined = slug.join("-");
-        if (a && b && (slugJoined.includes(`${a}-${b}`) || slugJoined.includes(`${b}-${a}`))) {
-            return { firstName, lastName: `${prev} ${last}` };
-        }
-    }
+    // NOTE: a slug-adjacency "compound surname" merge used to live here
+    // ("lindsay-avent-jay" -> lastName "Avent Jay"). It was removed because the
+    // slug cannot distinguish a compound surname from an ordinary middle name:
+    // every 3-token name whose slug carries all three tokens matched it, so
+    // "Anita Singh Rai" became "Singh Rai" and "Rajesh Kumar Sharma" became
+    // "Kumar Sharma". The last token is the surname; genuine compounds are
+    // still joined below when a particle (Van, De, St., Al) links them.
 
     // Keep surname particles with the final token (St. John, Van Der Berg)
     const lastTokens = [];
@@ -131,10 +291,23 @@ function splitPersonName(fullName, publicId) {
         if (i === 0) break;
         if (!SURNAME_PARTICLE_RE.test(core[i - 1])) break;
     }
+    let lastName = lastTokens.join(" ");
+
+    // "Chandana Basaveni B." / "Jotham Ndugga-Kabuye I" — LinkedIn shows a
+    // trailing initial AFTER the surname. The real surname is the token in
+    // front of it, but only when the vanity slug confirms that token is part
+    // of the name (so "Tracey S.", who has no surname on LinkedIn at all,
+    // still yields "S." rather than a guess).
+    if (isBareInitial(lastName) && core.length >= 2) {
+        const candidate = core[core.length - 2];
+        if (candidate && !isBareInitial(candidate) && slugConfirms(publicId, candidate)) {
+            lastName = candidate;
+        }
+    }
 
     return {
         firstName,
-        lastName: lastTokens.join(" ")
+        lastName
     };
 }
 
@@ -412,13 +585,34 @@ async function getProfile(page) {
         page.locator(SELECTORS.PROFILE.NAME).filter({ hasText: /\S/ }).nth(1),
         page.locator(SELECTORS.PROFILE.NAME).filter({ hasText: /\S/ }).first()
     ];
+    // Organisation names present on the page. The last-resort locator below
+    // takes whatever heading it finds, and on a profile whose top card had not
+    // rendered that was once a company card — shipping "Siemens (inactive)" as
+    // a person's first/last name. An org name is never a person name.
+    const orgNames = await page.evaluate(() =>
+        Array.from(document.querySelectorAll('a[href*="/company/"], a[href*="/school/"]'))
+            .map(a => (a.textContent || "").replace(/\s+/g, " ").trim())
+            .filter(Boolean)
+    ).catch(() => []);
+    const orgNameSet = new Set(orgNames.map(n => n.toLowerCase()));
+
+    // Section headings and activity-tab titles that are never a person's name.
+    // "All activity" is the heading of /in/<id>/recent-activity/all/ — reached
+    // when an input row carries that sub-route (index.js now normalises those
+    // away, so this is the second line of defence).
+    const NOT_A_PERSON_NAME =
+        /^(all activity|activity|posts|comments|reactions|documents|images|videos|newsletters|experience|education|skills|about|interests|publications|explore|ad options|don[’']t want)\b/i;
+
     for (const loc of nameLocators) {
         const text = await loc.textContent().catch(() => "");
         const cleaned = (text || "").replace(/\s+/g, " ").trim();
-        if (cleaned && !/^(activity|experience|education|skills|about|interests|explore|ad options|don[’']t want)/i.test(cleaned)) {
-            fullName = cleaned;
-            break;
+        if (!cleaned || NOT_A_PERSON_NAME.test(cleaned)) continue;
+        if (orgNameSet.has(cleaned.toLowerCase())) {
+            log.warning(`Skipping name candidate "${cleaned}" — matches a company/school on the page`);
+            continue;
         }
+        fullName = cleaned;
+        break;
     }
     if (!fullName) {
         throw new Error("Could not read profile name from top card");

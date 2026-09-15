@@ -47,10 +47,19 @@ const { profileNavGate } = require("./utils/nav-gate");
 
 /** Prefer www + https so we avoid an extra redirect before ACw→vanity. */
 function normalizeProfileUrl(url) {
-    return String(url || "")
+    const text = String(url || "")
         .trim()
         .replace(/^http:\/\//i, "https://")
         .replace(/^https:\/\/linkedin\.com\//i, "https://www.linkedin.com/");
+
+    // Input lists routinely carry a SUB-ROUTE instead of the profile itself
+    // (…/in/<id>/recent-activity/all/, …/in/<id>/details/experience/). Those
+    // pages load fine, so nothing looked broken — but their top heading reads
+    // "All activity", which then became the person's FIRST_NAME / LAST_NAME.
+    // Reduce anything under /in/<id>/ to the canonical profile URL (this also
+    // drops tracking query strings) before navigating.
+    const match = text.match(/^(https?:\/\/[^/]*linkedin\.com\/in\/[^/?#]+)/i);
+    return match ? `${match[1]}/` : text;
 }
 
 function inferRoleCompanyFromHeadline(headline) {
