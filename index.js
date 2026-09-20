@@ -244,16 +244,16 @@ async function scrapeProfile(page, profileUrl) {
         activity.recentText
     );
 
-    // Onsite Address = the CURRENT job's own location, not the person's
-    // general profile location and never a previous position's location.
-    // Most LinkedIn users don't fill in a per-role location though, so
-    // when the current experience entry doesn't have one, fall back to
-    // the profile's own location (logged, so it's clear which source a
-    // given row actually came from if that ever needs auditing).
-    let jobLocation = experience.location || "";
-    if (!jobLocation && profile.location) {
-        jobLocation = profile.location;
-        log.info(`No location on current role — using profile location for Onsite Address: "${profile.location}"`);
+    // Onsite Address = the CURRENT job's own location ONLY. Never the
+    // person's general profile location and never a previous position's
+    // location. If the current role has no per-role location filled in,
+    // Onsite Address is left blank rather than substituting the profile
+    // location — a blank is a correct "unknown", whereas the profile
+    // location would be a wrong value (the person's home area, not the
+    // current job's site).
+    const jobLocation = experience.location || "";
+    if (!jobLocation) {
+        log.info(`No location on current role — leaving Onsite Address blank (not falling back to profile location "${profile.location || ""}")`);
     }
 
     const inferred = inferRoleCompanyFromHeadline(profile.headline);
